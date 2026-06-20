@@ -263,10 +263,12 @@ export class NeoShogiEngine {
   }
 
   checkEnd() {
+    // Pass a getLegalActions callback so plugins can detect no-moves (詰み/ステイルメイト)
+    const getActions = () => this.getLegalActions();
     for (const p of this.plugins) {
       if (p.hooks?.check_end) {
         try {
-          const r = p.hooks.check_end(this.state);
+          const r = p.hooks.check_end(this.state, getActions);
           if (r != null) return r;
         } catch(e) {}
       }

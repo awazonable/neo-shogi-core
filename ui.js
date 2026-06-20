@@ -2,13 +2,13 @@
 // DOM描画・イベント処理・ゲーム設定モーダル
 
 import {
-  NeoShogiEngine, resetUid,
+  NeoShogiEngine, resetUid, opp,
   KANJI, pieceKanji, promoType,
 } from './engine.js';
 
 import {
   StandardShogiPlugin,
-  EarthquakePlugin,
+  NoMovesWinPlugin,
   DoubleMovePlugin,
 } from './plugins.js';
 
@@ -26,7 +26,7 @@ let gameOver     = false;
 let isAITurn     = false;
 let aiEnabled    = true;
 let aiChooseFn   = level1AIChooseAction;
-let hasDoubleMove = false; // DoubleMovePlugin active?
+let hasDoubleMove = false;
 
 const COL_KANJI = ['9','8','7','6','5','4','3','2','1'];
 const ROW_KANJI = ['一','二','三','四','五','六','七','八','九'];
@@ -114,15 +114,16 @@ function renderHand(player) {
   }
 
   for (const [type, count] of entries) {
-    const div   = document.createElement('div');
+    const div = document.createElement('div');
     div.className = 'hp';
     const isSel = selectedCell?.type==='hand' && selectedCell.player===player && selectedCell.pieceType===type;
     if (isSel) div.classList.add('sel');
 
-    const kEl = document.createElement('span');
-    kEl.className = 'hp-k' + (player==='white' ? ' white' : '');
-    kEl.textContent = KANJI[type] || type;
-    div.appendChild(kEl);
+    // 駒の背景付きで描画（盤上の駒と同じ piece クラスを小さくしたもの）
+    const pieceEl = document.createElement('div');
+    pieceEl.className = 'piece hp-piece' + (player === 'white' ? ' white' : '');
+    pieceEl.textContent = KANJI[type] || type;
+    div.appendChild(pieceEl);
 
     if (count > 1) {
       const nEl = document.createElement('span');
@@ -144,18 +145,7 @@ function renderStatus() {
   }
   if (isAITurn) { el.textContent = 'AIが考えています…'; return; }
   const turn = engine.state.turn;
-  const isCheck = isKingInCheckUI(turn);
-  const suffix  = isCheck ? ' 【王手！】' : '';
-  el.textContent = (turn==='black' ? '先手(黒)のターン' : '後手(白)のターン (AI)') + suffix;
-}
-
-// 王手インジケーター（UI用、王手判定をUI側で呼ぶ）
-function isKingInCheckUI(player) {
-  try {
-    // Simply check if opponent can reach king — reuse engine's legal action filter indirectly
-    // We import isKingInCheck from engine only inside renderStatus to avoid circular hints
-    return false; // Placeholder; actual check shown in status via validate_action filtering
-  } catch(e) { return false; }
+  el.textContent = turn==='black' ? '先手(黒)のターン' : '後手(白)のターン (AI)';
 }
 
 function renderDoubleBtn() {
@@ -167,9 +157,9 @@ function renderDoubleBtn() {
   }
   const used = engine.state.global.doubleMoveUsed || {};
   const turn = engine.state.turn;
+  // 宣言ボタンは先手（黒・人間）のターンかつ未使用のときのみ表示
   if (turn === 'black' && !used['black']) {
     btn.style.display = '';
-    btn.textContent = '二手指し宣言';
   } else {
     btn.style.display = 'none';
   }
@@ -236,9 +226,11 @@ function handleHandClick(player, pieceType) {
   renderAll();
 }
 
+// ── Action execution ─────────────────────────────────────────────
 function executeAction(action) {
   clearSel();
   const result = engine.step(action);
+  // engine.step が check_end を呼び、NoMovesWinPlugin も含めて判定済み
   if (result) {
     gameOver = result;
     renderAll();
@@ -246,18 +238,6 @@ function executeAction(action) {
     return;
   }
   renderAll();
-
-  // 手番後、合法手なし = 詰み（相手勝ち）
-  const nowTurn = engine.state.turn;
-  if (nowTurn === 'black' && !gameOver) {
-    const humanMoves = engine.getLegalActions();
-    if (!humanMoves.length) {
-      gameOver = 'white';
-      renderAll();
-      showWinner('white');
-      return;
-    }
-  }
 
   if (aiEnabled && engine.state.turn === 'white' && !gameOver) {
     isAITurn = true;
@@ -269,12 +249,15 @@ function executeAction(action) {
 function doAITurn() {
   const action = aiChooseFn(engine);
   isAITurn = false;
+
   if (!action) {
+    // AI に合法手がない（NoMovesWinPlugin が check_end で処理するはずだが念のため）
     gameOver = 'black';
     renderAll();
     showWinner('black');
     return;
   }
+
   const result = engine.step(action);
   if (result) {
     gameOver = result;
@@ -283,6 +266,14 @@ function doAITurn() {
     return;
   }
   renderAll();
+
+  // turn が white のまま（skipTurnChange が起きた場合）は再スケジュール
+  // 例：将来的なプラグインで白にも特殊アクションが追加された場合の保険
+  if (aiEnabled && engine.state.turn === 'white' && !gameOver) {
+    isAITurn = true;
+    renderStatus();
+    setTimeout(doAITurn, 200);
+  }
 }
 
 // ── Promotion dialog ─────────────────────────────────────────────
@@ -306,7 +297,9 @@ function hidePromoDialog() {
 // ── Winner overlay ────────────────────────────────────────────────
 function showWinner(winner) {
   document.getElementById('winner-title').textContent = winner==='black' ? '先手(黒)の勝ち！' : '後手(白)の勝ち！';
-  document.getElementById('winner-msg').textContent   = winner==='black' ? '白の王将を詰めました' : 'AIが黒の王将を詰めました';
+  document.getElementById('winner-msg').textContent   = winner==='black'
+    ? '後手の合法手がなくなりました'
+    : '先手の合法手がなくなりました';
   document.getElementById('winner-overlay').classList.add('show');
 }
 
@@ -327,24 +320,23 @@ function hideSetupModal() {
 
 // ── Game initialization ───────────────────────────────────────────
 function startNewGame() {
-  const useEarthquake  = document.getElementById('opt-earthquake')?.checked  || false;
-  const useDoubleMove  = document.getElementById('opt-double-move')?.checked || false;
-  const aiLevel        = document.querySelector('input[name="ai-level"]:checked')?.value || 'level1';
+  const useDoubleMove = document.getElementById('opt-double-move')?.checked || false;
+  const aiLevel       = document.querySelector('input[name="ai-level"]:checked')?.value || 'level1';
 
   hideSetupModal();
   hideWinner();
   hidePromoDialog();
   clearSel();
-  gameOver     = false;
-  isAITurn     = false;
+  gameOver      = false;
+  isAITurn      = false;
   hasDoubleMove = useDoubleMove;
-  aiEnabled    = true;
-  aiChooseFn   = aiLevel === 'level1' ? level1AIChooseAction : randomAIChooseAction;
+  aiEnabled     = true;
+  aiChooseFn    = aiLevel === 'level1' ? level1AIChooseAction : randomAIChooseAction;
 
   resetUid();
   engine = new NeoShogiEngine();
   engine.use(StandardShogiPlugin);
-  if (useEarthquake) engine.use(EarthquakePlugin);
+  engine.use(NoMovesWinPlugin);       // 詰み・ステイルメイト判定（常時）
   if (useDoubleMove) engine.use(DoubleMovePlugin);
   engine.init();
 
@@ -377,5 +369,4 @@ if (dblBtn) {
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────────
-// Show setup modal on first load
 showSetupModal();

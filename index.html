@@ -40,9 +40,9 @@ h1{font-size:28px;letter-spacing:.2em;color:var(--accent);text-shadow:0 0 20px #
 }
 .hp:hover{background:#ffffff12}
 .hp.sel{background:#4caf5033;border-color:var(--sel)}
-.hp-k{font-size:20px;line-height:1;color:var(--black-text)}
-.hp-k.white{transform:rotate(180deg);display:inline-block}
 .hp-n{font-size:11px;color:var(--subtext)}
+/* 持ち駒の駒背景（盤上 .piece の小さい版） */
+.piece.hp-piece{width:38px;height:38px;font-size:16px;cursor:pointer}
 .no-pieces{font-size:12px;color:var(--subtext);text-align:center;padding:8px 0}
 /* ── BOARD ──────────────────────────────── */
 .board-outer{display:flex;flex-direction:column;align-items:center;gap:4px}
@@ -212,13 +212,6 @@ button:hover{background:#3a3a6e}
       <div class="setup-row-text">
         <span class="setup-row-name">標準将棋ルール（必須）</span>
         <span class="setup-desc">9×9盤・8駒種・王手放置禁止</span>
-      </div>
-    </label>
-    <label class="setup-row">
-      <input type="checkbox" id="opt-earthquake">
-      <div class="setup-row-text">
-        <span class="setup-row-name">地震モード</span>
-        <span class="setup-desc">毎ターン後、全駒が同方向に1マスずれる（盤外は消滅）</span>
       </div>
     </label>
     <label class="setup-row">

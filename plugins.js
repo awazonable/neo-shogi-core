@@ -1,11 +1,11 @@
 // plugins.js — Plugin Layer (Neo将棋 v0.4)
-// StandardShogiPlugin + EarthquakePlugin + DoubleMovePlugin
+// StandardShogiPlugin + NoMovesWinPlugin + DoubleMovePlugin
 
 import {
-  deepClone, opp, inB, tokAt,
+  deepClone, opp, inB,
   makeToken, makeBoard, PIECE_TAGS,
   CAN_PROMOTE, promoType, demoteType, inPromoZone, mustPromo,
-  getMoves, isKingInCheck, nextRandom, simulateAction,
+  getMoves, isKingInCheck, simulateAction,
 } from './engine.js';
 
 // ── Initial position (standard shogi SFEN start) ──────────────────
@@ -140,6 +140,7 @@ export const StandardShogiPlugin = {
     },
 
     check_end(state) {
+      // Safety net: detect king capture (shouldn't happen with proper check validation)
       let bk=false, wk=false;
       for (let r=0; r<9; r++) for (let c=0; c<9; c++) {
         const t = state.board[r][c].token;
@@ -152,57 +153,46 @@ export const StandardShogiPlugin = {
   }
 };
 
-// ── EarthquakePlugin ──────────────────────────────────────────────
-export const EarthquakePlugin = {
-  id: 'earthquake',
-  priority: 50,
+// ── NoMovesWinPlugin ──────────────────────────────────────────────
+// 詰み（王手されて動けない）またはステイルメイト（王手でないが動けない）で
+// 手番プレイヤーの負け。将棋では引き分けなし。
+export const NoMovesWinPlugin = {
+  id: 'no_moves_win',
+  priority: 90,
   meta: {
-    name: '地震モード',
-    description: '毎ターン終了後、全駒が同じ方向に1マスずれる。盤外に出た駒は消滅（カオス！）',
+    name: '詰み・ステイルメイト判定',
+    description: '合法手がなくなったプレイヤーの負け（詰み・自玉包囲どちらも）',
   },
 
   hooks: {
-    on_turn_end(state) {
-      const dirs = [{dr:-1,dc:0},{dr:1,dc:0},{dr:0,dc:-1},{dr:0,dc:1}];
-      const s    = deepClone(state);
-      const {dr, dc} = dirs[Math.floor(nextRandom(s) * 4)];
-
-      const nb = makeBoard();
-      // Process in row order to handle collisions deterministically
-      for (let r=0; r<9; r++) for (let c=0; c<9; c++) {
-        const t = s.board[r][c].token;
-        if (!t) continue;
-        const nr = r+dr, nc = c+dc;
-        if (inB(nr, nc) && !nb[nr][nc].token) {
-          nb[nr][nc].token = t;
-        } else if (!nb[r][c].token) {
-          nb[r][c].token = t;  // Can't move → stay in place
-        }
-        // Both blocked → piece is displaced (chaos, by design)
-      }
-      s.board = nb;
-      return s;
+    // getLegalActions は engine.checkEnd() から渡されるコールバック
+    check_end(state, getLegalActions) {
+      if (!getLegalActions) return null;
+      const actions = getLegalActions();
+      if (!actions.length) return opp(state.turn);
+      return null;
     },
   },
 };
 
 // ── DoubleMovePlugin ──────────────────────────────────────────────
-// Cookbook A-2-2: 1局1回、宣言で2手連続（skipTurnChange で制御）
+// 先手（黒・人間）専用。1局1回だけ宣言で2手連続。
 export const DoubleMovePlugin = {
   id: 'double_move',
   priority: 0,
   meta: {
     name: '二手指しモード',
-    description: '1局に1回だけ「二手指し宣言」ができ、次の1手は手番交代しない',
+    description: '先手が1局に1回だけ「二手指し宣言」ができ、次の1手は手番交代しない',
   },
 
   hooks: {
     get_actions(actions, state) {
+      // 先手（黒）専用：AIに誤用させない
+      if (state.turn !== 'black') return actions;
       const used = state.global.doubleMoveUsed || {};
-      if (used[state.turn]) return actions;
-      // Inject a special action that the UI will surface as a button
+      if (used['black']) return actions;
       return [...actions, {
-        player: state.turn,
+        player: 'black',
         tag:    'declare_double',
         payload: {},
       }];
@@ -210,7 +200,7 @@ export const DoubleMovePlugin = {
 
     apply_action(action, state) {
       if (action.tag === 'declare_double') {
-        // No board change; after_action handles the flag
+        // 盤面は変わらない。after_action で skipTurnChange を設定する
         return deepClone(state);
       }
       return null;
@@ -219,7 +209,7 @@ export const DoubleMovePlugin = {
     after_action(action, state) {
       if (action.tag === 'declare_double') {
         const used = { ...(state.global.doubleMoveUsed || {}) };
-        used[state.turn] = true;
+        used['black'] = true;
         return {
           ...state,
           global: { ...state.global, doubleMoveUsed: used, skipTurnChange: true },

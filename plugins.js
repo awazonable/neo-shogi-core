@@ -1,0 +1,231 @@
+// plugins.js — Plugin Layer (Neo将棋 v0.4)
+// StandardShogiPlugin + EarthquakePlugin + DoubleMovePlugin
+
+import {
+  deepClone, opp, inB, tokAt,
+  makeToken, makeBoard, PIECE_TAGS,
+  CAN_PROMOTE, promoType, demoteType, inPromoZone, mustPromo,
+  getMoves, isKingInCheck, nextRandom, simulateAction,
+} from './engine.js';
+
+// ── Initial position (standard shogi SFEN start) ──────────────────
+const INIT_SETUP = [
+  // White (rows 0-2, top of screen)
+  {r:0,c:0,t:'L',o:'white'},{r:0,c:1,t:'N',o:'white'},{r:0,c:2,t:'S',o:'white'},
+  {r:0,c:3,t:'G',o:'white'},{r:0,c:4,t:'K',o:'white'},{r:0,c:5,t:'G',o:'white'},
+  {r:0,c:6,t:'S',o:'white'},{r:0,c:7,t:'N',o:'white'},{r:0,c:8,t:'L',o:'white'},
+  {r:1,c:1,t:'R',o:'white'},{r:1,c:7,t:'B',o:'white'},
+  ...Array.from({length:9},(_,c)=>({r:2,c,t:'P',o:'white'})),
+  // Black (rows 6-8, bottom of screen)
+  ...Array.from({length:9},(_,c)=>({r:6,c,t:'P',o:'black'})),
+  {r:7,c:1,t:'B',o:'black'},{r:7,c:7,t:'R',o:'black'},
+  {r:8,c:0,t:'L',o:'black'},{r:8,c:1,t:'N',o:'black'},{r:8,c:2,t:'S',o:'black'},
+  {r:8,c:3,t:'G',o:'black'},{r:8,c:4,t:'K',o:'black'},{r:8,c:5,t:'G',o:'black'},
+  {r:8,c:6,t:'S',o:'black'},{r:8,c:7,t:'N',o:'black'},{r:8,c:8,t:'L',o:'black'},
+];
+
+function hasPawnInCol(board, col, player) {
+  for (let r=0; r<9; r++) {
+    const t = board[r][col].token;
+    if (t && t.owner===player && t.type==='P') return true;
+  }
+  return false;
+}
+
+function badDropRank(type, row, player) {
+  if (player==='black') {
+    if (type==='P'||type==='L') return row===0;
+    if (type==='N') return row<=1;
+  } else {
+    if (type==='P'||type==='L') return row===8;
+    if (type==='N') return row>=7;
+  }
+  return false;
+}
+
+// ── StandardShogiPlugin ───────────────────────────────────────────
+export const StandardShogiPlugin = {
+  id: 'standard_shogi',
+  priority: -100,
+  meta: { name: '標準将棋ルール', description: '9×9盤・8駒種・打ち駒・成り・王手放置禁止' },
+
+  hooks: {
+    on_game_init(state) {
+      const s = deepClone(state);
+      for (const {r,c,t,o} of INIT_SETUP)
+        s.board[r][c].token = makeToken(t, o);
+      return s;
+    },
+
+    get_actions(actions, state) {
+      const player = state.turn;
+      const out = [];
+
+      // Board moves
+      for (let r=0; r<9; r++) {
+        for (let c=0; c<9; c++) {
+          const token = state.board[r][c].token;
+          if (!token || token.owner !== player) continue;
+          const dests = getMoves(token, r, c, state.board);
+          for (const {row, col} of dests) {
+            const inPZ = inPromoZone(r, player) || inPromoZone(row, player);
+            const cp   = CAN_PROMOTE.has(token.type) && inPZ;
+            const mp   = mustPromo(token.type, row, player);
+            if (cp && !mp) {
+              out.push({player, tag:'move', payload:{from:{row:r,col:c}, to:{row,col}, promote:false}});
+              out.push({player, tag:'move', payload:{from:{row:r,col:c}, to:{row,col}, promote:true}});
+            } else {
+              out.push({player, tag:'move', payload:{from:{row:r,col:c}, to:{row,col}, promote:mp}});
+            }
+          }
+        }
+      }
+
+      // Drop moves
+      const seen = new Set();
+      for (const token of state.hands[player]) {
+        if (seen.has(token.type)) continue;
+        seen.add(token.type);
+        for (let r=0; r<9; r++) {
+          for (let c=0; c<9; c++) {
+            if (state.board[r][c].token) continue;
+            if (badDropRank(token.type, r, player)) continue;
+            if (token.type==='P' && hasPawnInCol(state.board, c, player)) continue;
+            out.push({player, tag:'drop', payload:{type:token.type, to:{row:r, col:c}}});
+          }
+        }
+      }
+
+      return [...actions, ...out];
+    },
+
+    // 王手放置禁止：移動後に自分の王が取られる状態になるなら不可
+    validate_action(action, state) {
+      if (action.tag === 'declare_double') return true;
+      const next = simulateAction(action, state, [StandardShogiPlugin]);
+      if (!next) return false;
+      return !isKingInCheck(next, action.player);
+    },
+
+    apply_action(action, state) {
+      if (action.tag === 'move') {
+        const {from, to, promote} = action.payload;
+        const s = deepClone(state);
+        let token = {...s.board[from.row][from.col].token};
+        const target = s.board[to.row][to.col].token;
+        if (target) {
+          s.hands[action.player].push(makeToken(demoteType(target.type), action.player));
+        }
+        s.board[from.row][from.col].token = null;
+        if (promote) {
+          token.type = promoType(token.type);
+          const base = token.type.replace('+','');
+          token.tags = ['piece','promoted',...(PIECE_TAGS[base]||[])];
+        }
+        s.board[to.row][to.col].token = token;
+        s.global.lastMove = {from, to};
+        return s;
+      }
+      if (action.tag === 'drop') {
+        const {type, to} = action.payload;
+        const s = deepClone(state);
+        const idx = s.hands[action.player].findIndex(t => t.type===type);
+        if (idx === -1) return null;
+        const [token] = s.hands[action.player].splice(idx, 1);
+        s.board[to.row][to.col].token = {...token};
+        s.global.lastMove = {from:null, to};
+        return s;
+      }
+      return null;
+    },
+
+    check_end(state) {
+      let bk=false, wk=false;
+      for (let r=0; r<9; r++) for (let c=0; c<9; c++) {
+        const t = state.board[r][c].token;
+        if (t?.type==='K') { if(t.owner==='black') bk=true; else wk=true; }
+      }
+      if (!bk) return 'white';
+      if (!wk) return 'black';
+      return null;
+    },
+  }
+};
+
+// ── EarthquakePlugin ──────────────────────────────────────────────
+export const EarthquakePlugin = {
+  id: 'earthquake',
+  priority: 50,
+  meta: {
+    name: '地震モード',
+    description: '毎ターン終了後、全駒が同じ方向に1マスずれる。盤外に出た駒は消滅（カオス！）',
+  },
+
+  hooks: {
+    on_turn_end(state) {
+      const dirs = [{dr:-1,dc:0},{dr:1,dc:0},{dr:0,dc:-1},{dr:0,dc:1}];
+      const s    = deepClone(state);
+      const {dr, dc} = dirs[Math.floor(nextRandom(s) * 4)];
+
+      const nb = makeBoard();
+      // Process in row order to handle collisions deterministically
+      for (let r=0; r<9; r++) for (let c=0; c<9; c++) {
+        const t = s.board[r][c].token;
+        if (!t) continue;
+        const nr = r+dr, nc = c+dc;
+        if (inB(nr, nc) && !nb[nr][nc].token) {
+          nb[nr][nc].token = t;
+        } else if (!nb[r][c].token) {
+          nb[r][c].token = t;  // Can't move → stay in place
+        }
+        // Both blocked → piece is displaced (chaos, by design)
+      }
+      s.board = nb;
+      return s;
+    },
+  },
+};
+
+// ── DoubleMovePlugin ──────────────────────────────────────────────
+// Cookbook A-2-2: 1局1回、宣言で2手連続（skipTurnChange で制御）
+export const DoubleMovePlugin = {
+  id: 'double_move',
+  priority: 0,
+  meta: {
+    name: '二手指しモード',
+    description: '1局に1回だけ「二手指し宣言」ができ、次の1手は手番交代しない',
+  },
+
+  hooks: {
+    get_actions(actions, state) {
+      const used = state.global.doubleMoveUsed || {};
+      if (used[state.turn]) return actions;
+      // Inject a special action that the UI will surface as a button
+      return [...actions, {
+        player: state.turn,
+        tag:    'declare_double',
+        payload: {},
+      }];
+    },
+
+    apply_action(action, state) {
+      if (action.tag === 'declare_double') {
+        // No board change; after_action handles the flag
+        return deepClone(state);
+      }
+      return null;
+    },
+
+    after_action(action, state) {
+      if (action.tag === 'declare_double') {
+        const used = { ...(state.global.doubleMoveUsed || {}) };
+        used[state.turn] = true;
+        return {
+          ...state,
+          global: { ...state.global, doubleMoveUsed: used, skipTurnChange: true },
+        };
+      }
+      return state;
+    },
+  },
+};

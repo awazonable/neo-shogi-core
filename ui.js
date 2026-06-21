@@ -3,19 +3,21 @@
 
 import {
   NeoShogiEngine, resetUid, opp,
-  KANJI, pieceKanji, promoType,
-} from './engine.js?v=4';
+  KANJI, pieceKanji, promoType, makeToken, deepClone,
+} from './engine.js?v=5';
 
 import {
   StandardShogiPlugin,
   NoMovesWinPlugin,
   DoubleMovePlugin,
-} from './plugins.js?v=4';
+} from './plugins.js?v=5';
 
 import {
   randomAIChooseAction,
   level1AIChooseAction,
-} from './ai.js?v=4';
+  level2AIChooseAction,
+  level3AIChooseAction,
+} from './ai.js?v=5';
 
 import {
   ReverseWinPlugin,
@@ -28,7 +30,11 @@ import {
   ShrinkBoardPlugin,
   GravityPlugin,
   CaptureWinPlugin,
-} from './plugins-extra.js?v=4';
+  QueenPlugin,
+  CrazyKnightPlugin,
+  NinjaPlugin,
+  EXTRA_KANJI,
+} from './plugins-extra.js?v=5';
 
 // ── UI State ─────────────────────────────────────────────────────
 let engine        = null;
@@ -41,6 +47,42 @@ let aiEnabled     = true;
 let aiChooseFn    = level1AIChooseAction;
 let hasDoubleMove = false;
 let captureWinActive = false;
+
+// ── 追加駒のカナ表示 ──────────────────────────────────────────────
+function pieceKanjiEx(token) {
+  return EXTRA_KANJI[token.type] || pieceKanji(token);
+}
+
+// ── カスタム初期配置 ──────────────────────────────────────────────
+// null = 標準配置。Array(9).fill(…) 形式: 各セルが {type, owner} | null
+let customLayout = null;
+
+function makeCustomInitPlugin(layout) {
+  return {
+    id: 'custom_init', priority: -200,
+    hooks: {
+      on_game_init(state) {
+        const s = deepClone(state);
+        for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) s.board[r][c].token = null;
+        s.hands = { black: [], white: [] };
+        for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
+          const item = layout[r][c];
+          if (item) s.board[r][c].token = makeToken(item.type, item.owner);
+        }
+        return s;
+      },
+    },
+  };
+}
+
+function getStandardLayout() {
+  const tmp = new NeoShogiEngine();
+  tmp.use(StandardShogiPlugin);
+  tmp.init();
+  return tmp.state.board.map(row => row.map(cell =>
+    cell.token ? { type: cell.token.type, owner: cell.token.owner } : null
+  ));
+}
 
 const COL_KANJI = ['9','8','7','6','5','4','3','2','1'];
 const ROW_KANJI = ['一','二','三','四','五','六','七','八','九'];
@@ -105,7 +147,7 @@ function renderBoard() {
         piece.className = 'piece' +
           (token.owner==='white' ? ' white' : '') +
           (token.type.startsWith('+') ? ' promo' : '');
-        piece.textContent = pieceKanji(token);
+        piece.textContent = pieceKanjiEx(token);
         cell.appendChild(piece);
       }
 
@@ -142,7 +184,7 @@ function renderHand(player) {
     // 駒の背景付きで描画（盤上の駒と同じ piece クラスを小さくしたもの）
     const pieceEl = document.createElement('div');
     pieceEl.className = 'piece hp-piece' + (player === 'white' ? ' white' : '');
-    pieceEl.textContent = KANJI[type] || type;
+    pieceEl.textContent = EXTRA_KANJI[type] || KANJI[type] || type;
     div.appendChild(pieceEl);
 
     if (count > 1) {
@@ -335,15 +377,116 @@ function hidePromoDialog() {
 
 // ── Winner overlay ────────────────────────────────────────────────
 function showWinner(winner) {
-  document.getElementById('winner-title').textContent = winner==='black' ? '先手(黒)の勝ち！' : '後手(白)の勝ち！';
-  document.getElementById('winner-msg').textContent   = winner==='black'
-    ? '後手の合法手がなくなりました'
-    : '先手の合法手がなくなりました';
+  const title = winner==='black' ? '先手(黒)の勝ち！' : '後手(白)の勝ち！';
+  const msg   = winner==='black' ? '後手の合法手がなくなりました' : '先手の合法手がなくなりました';
+  document.getElementById('winner-title').textContent = title;
+  document.getElementById('winner-msg').textContent   = msg;
+  document.getElementById('winner-mini-text').textContent = title;
+  document.getElementById('winner-mini').style.display = 'none';
   document.getElementById('winner-overlay').classList.add('show');
 }
 
 function hideWinner() {
   document.getElementById('winner-overlay').classList.remove('show');
+  document.getElementById('winner-mini').style.display = 'none';
+}
+
+function minimizeWinner() {
+  document.getElementById('winner-overlay').classList.remove('show');
+  document.getElementById('winner-mini').style.display = 'flex';
+}
+
+function restoreWinner() {
+  document.getElementById('winner-mini').style.display = 'none';
+  document.getElementById('winner-overlay').classList.add('show');
+}
+
+// ── Board Editor ──────────────────────────────────────────────────
+// 全駒種パレット定義
+const PALETTE_PIECES = ['P','L','N','S','G','B','R','K','+P','+L','+N','+S','+B','+R'];
+
+let editorLayout = null;       // 編集中の盤面
+let selectedPalette = null;    // {type, owner} | null（null=消去）
+
+function openEditor() {
+  editorLayout = customLayout
+    ? customLayout.map(row => row.map(c => c ? {...c} : null))
+    : getStandardLayout();
+  selectedPalette = null;
+  buildPalette();
+  renderEditorBoard();
+  document.getElementById('editor-overlay').style.display = 'block';
+  document.getElementById('editor-modal').style.display   = 'block';
+}
+
+function closeEditor() {
+  document.getElementById('editor-overlay').style.display = 'none';
+  document.getElementById('editor-modal').style.display   = 'none';
+}
+
+function buildPalette() {
+  const el = document.getElementById('editor-palette');
+  el.innerHTML = '';
+
+  // 消去タイル
+  const eraser = document.createElement('div');
+  eraser.className = 'palette-tile eraser' + (selectedPalette === null ? ' selected' : '');
+  eraser.textContent = '✕';
+  eraser.title = '消去';
+  eraser.onclick = () => { selectedPalette = null; buildPalette(); };
+  el.appendChild(eraser);
+
+  // 先手・後手それぞれのラベル + 駒タイル
+  for (const owner of ['black', 'white']) {
+    const lbl = document.createElement('div');
+    lbl.className = 'palette-group-label';
+    lbl.textContent = owner === 'black' ? '先手(黒)' : '後手(白)';
+    el.appendChild(lbl);
+
+    for (const type of PALETTE_PIECES) {
+      const tile = document.createElement('div');
+      const isSel = selectedPalette?.type === type && selectedPalette?.owner === owner;
+      tile.className = 'palette-tile' + (owner === 'white' ? ' white-piece' : '') + (isSel ? ' selected' : '');
+      tile.textContent = EXTRA_KANJI[type] || KANJI[type] || type;
+      tile.title = `${owner === 'black' ? '先手' : '後手'} ${type}`;
+      tile.onclick = () => { selectedPalette = { type, owner }; buildPalette(); };
+      el.appendChild(tile);
+    }
+  }
+}
+
+function renderEditorBoard() {
+  const el = document.getElementById('editor-board');
+  el.innerHTML = '';
+  for (let r = 0; r < 9; r++) {
+    for (let c = 0; c < 9; c++) {
+      const cell = document.createElement('div');
+      cell.className = 'editor-cell';
+      const item = editorLayout[r][c];
+      if (item) {
+        const piece = document.createElement('div');
+        piece.className = 'piece' +
+          (item.owner === 'white' ? ' white' : '') +
+          (item.type.startsWith('+') ? ' promo' : '');
+        piece.textContent = EXTRA_KANJI[item.type] || KANJI[item.type] || item.type;
+        cell.appendChild(piece);
+      }
+      const rr = r, cc = c;
+      cell.addEventListener('click', () => {
+        if (selectedPalette === null) {
+          editorLayout[rr][cc] = null;
+        } else {
+          editorLayout[rr][cc] = { ...selectedPalette };
+        }
+        renderEditorBoard();
+      });
+      el.appendChild(cell);
+    }
+  }
+}
+
+function updateCustomLayoutBadge() {
+  document.getElementById('custom-layout-badge').style.display = customLayout ? '' : 'none';
 }
 
 // ── Setup modal ───────────────────────────────────────────────────
@@ -369,6 +512,9 @@ function startNewGame() {
   const usePromoAnywhere = document.getElementById('opt-promote-anywhere')?.checked || false;
   const useGravity       = document.getElementById('opt-gravity')?.checked        || false;
   const useShrink        = document.getElementById('opt-shrink')?.checked         || false;
+  const useQueen         = document.getElementById('opt-queen')?.checked          || false;
+  const useCrazyKnight   = document.getElementById('opt-crazy-knight')?.checked   || false;
+  const useNinja         = document.getElementById('opt-ninja')?.checked          || false;
   const aiLevel          = document.querySelector('input[name="ai-level"]:checked')?.value || 'level1';
 
   hideSetupModal();
@@ -380,7 +526,8 @@ function startNewGame() {
   hasDoubleMove    = useDoubleMove;
   captureWinActive = winCond === 'capture';
   aiEnabled        = true;
-  aiChooseFn       = aiLevel === 'level1' ? level1AIChooseAction : randomAIChooseAction;
+  aiChooseFn = { random: randomAIChooseAction, level1: level1AIChooseAction,
+                 level2: level2AIChooseAction, level3: level3AIChooseAction }[aiLevel] || level1AIChooseAction;
 
   resetUid();
   engine = new NeoShogiEngine();
@@ -413,6 +560,14 @@ function startNewGame() {
   if (useGravity) engine.use(GravityPlugin);
   if (useShrink)  engine.use(ShrinkBoardPlugin);
 
+  // ── 追加駒 ────────────────────────────────
+  if (useQueen)       engine.use(QueenPlugin);
+  if (useCrazyKnight) engine.use(CrazyKnightPlugin);
+  if (useNinja)       engine.use(NinjaPlugin);
+
+  // ── カスタム初期配置 ──────────────────────
+  if (customLayout) engine.use(makeCustomInitPlugin(customLayout));
+
   engine.init();
   buildLabels();
   renderAll();
@@ -422,6 +577,39 @@ function startNewGame() {
 document.getElementById('btn-new-game').addEventListener('click', showSetupModal);
 document.getElementById('btn-start-game').addEventListener('click', startNewGame);
 document.getElementById('btn-play-again').addEventListener('click', () => { hideWinner(); showSetupModal(); });
+
+// Winner minimize / restore
+document.getElementById('btn-minimize-winner').addEventListener('click', minimizeWinner);
+document.getElementById('btn-winner-restore').addEventListener('click', restoreWinner);
+document.getElementById('btn-winner-mini-again').addEventListener('click', () => { hideWinner(); showSetupModal(); });
+
+// Board editor
+document.getElementById('btn-open-editor').addEventListener('click', () => {
+  hideSetupModal();
+  openEditor();
+});
+document.getElementById('btn-editor-done').addEventListener('click', () => {
+  customLayout = editorLayout.map(row => row.map(c => c ? {...c} : null));
+  closeEditor();
+  updateCustomLayoutBadge();
+  showSetupModal();
+});
+document.getElementById('btn-editor-cancel').addEventListener('click', () => {
+  closeEditor();
+  showSetupModal();
+});
+document.getElementById('btn-editor-standard').addEventListener('click', () => {
+  editorLayout = getStandardLayout();
+  renderEditorBoard();
+});
+document.getElementById('btn-editor-clear').addEventListener('click', () => {
+  editorLayout = Array.from({length:9}, () => Array(9).fill(null));
+  renderEditorBoard();
+});
+document.getElementById('btn-clear-editor').addEventListener('click', () => {
+  customLayout = null;
+  updateCustomLayoutBadge();
+});
 
 document.getElementById('btn-toggle-ai').addEventListener('click', () => {
   aiEnabled = !aiEnabled;

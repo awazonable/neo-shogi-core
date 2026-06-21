@@ -181,6 +181,53 @@ button:hover{background:#3a3a6e}
 }
 #winner-box h2{font-size:32px;color:var(--accent);margin-bottom:12px}
 #winner-box p{font-size:18px;color:var(--text);margin-bottom:24px}
+#btn-minimize-winner{
+  display:block;margin:0 auto 0;padding:4px 14px;font-size:12px;
+  background:transparent;border:1px solid #ffffff33;color:var(--subtext);
+  border-radius:12px;cursor:pointer;
+}
+#btn-minimize-winner:hover{background:#ffffff12;color:var(--text)}
+/* ── WINNER MINI BAR ────────────────────── */
+#winner-mini{
+  display:none;position:fixed;bottom:0;left:0;right:0;z-index:200;
+  background:#1e1e3e;border-top:2px solid var(--accent);
+  padding:8px 16px;gap:10px;align-items:center;flex-wrap:wrap;
+}
+#winner-mini-text{flex:1;font-size:14px;color:var(--accent);font-weight:700}
+#winner-mini button{padding:5px 14px;font-size:13px}
+/* ── BOARD EDITOR ───────────────────────── */
+#editor-modal{
+  width:min(calc(100vw - 24px),600px);max-height:90vh;
+  overflow-y:auto;padding:16px 20px;
+}
+#editor-modal h2{font-size:18px;color:var(--accent);margin-bottom:12px;text-align:center}
+#editor-palette{
+  display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px;
+  padding:8px;background:#12122a;border-radius:8px;
+}
+.palette-tile{
+  width:38px;height:38px;background:var(--piece-bg);border:2px solid transparent;
+  border-radius:4px;display:flex;align-items:center;justify-content:center;
+  font-size:15px;font-weight:700;color:var(--black-text);cursor:pointer;
+  clip-path:polygon(50% 0%,97% 18%,100% 100%,0% 100%,3% 18%);
+  transition:border-color .12s;
+}
+.palette-tile.white-piece{transform:rotate(180deg)}
+.palette-tile.selected{border-color:var(--sel)!important;filter:brightness(1.2)}
+.palette-tile.eraser{clip-path:none;border-radius:6px;background:#2a1a1a;border-color:#cc4444;color:#ff8888;font-size:18px}
+#editor-board-wrap{display:flex;justify-content:center;margin-bottom:10px}
+#editor-board{
+  display:grid;grid-template-columns:repeat(9,var(--cell));
+  grid-template-rows:repeat(9,var(--cell));
+  background:var(--board);border:3px solid var(--border);
+}
+.editor-cell{
+  width:var(--cell);height:var(--cell);border:1px solid rgba(92,51,23,.35);
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+}
+.editor-cell:hover{background:var(--hover)}
+.editor-btns{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.palette-group-label{width:100%;font-size:10px;color:var(--subtext);margin-top:4px;letter-spacing:.08em}
 </style>
 </head>
 <body>
@@ -336,6 +383,40 @@ button:hover{background:#3a3a6e}
   </div>
 
   <div class="setup-section">
+    <div class="setup-label">追加駒</div>
+    <label class="setup-row">
+      <input type="checkbox" id="opt-queen">
+      <div class="setup-row-text">
+        <span class="setup-row-name">クイーン（女）追加</span>
+        <span class="setup-desc">全8方向スライダー。各プレイヤーの持ち駒に1枚追加</span>
+      </div>
+    </label>
+    <label class="setup-row">
+      <input type="checkbox" id="opt-crazy-knight">
+      <div class="setup-row-text">
+        <span class="setup-row-name">全方向桂（跳）追加</span>
+        <span class="setup-desc">チェスのナイト式・8方向全てに桂馬跳び。各プレイヤーに1枚</span>
+      </div>
+    </label>
+    <label class="setup-row">
+      <input type="checkbox" id="opt-ninja">
+      <div class="setup-row-text">
+        <span class="setup-row-name">忍者（忍）追加</span>
+        <span class="setup-desc">盤上の任意の空きマスへ瞬間移動・任意の敵駒を取れる</span>
+      </div>
+    </label>
+  </div>
+
+  <div class="setup-section">
+    <div class="setup-label">盤面</div>
+    <div style="display:flex;gap:8px;padding:4px 8px">
+      <button id="btn-open-editor" type="button" style="flex:1;font-size:12px;padding:6px">✏️ 盤面を編集</button>
+      <button id="btn-clear-editor" type="button" style="font-size:12px;padding:6px;color:var(--subtext);background:transparent">✕ リセット</button>
+    </div>
+    <div id="custom-layout-badge" style="display:none;font-size:11px;color:#a6e3a1;padding:2px 8px">カスタム配置が設定されています</div>
+  </div>
+
+  <div class="setup-section">
     <div class="setup-label">AI レベル</div>
     <label class="setup-row">
       <input type="radio" name="ai-level" value="random">
@@ -351,6 +432,20 @@ button:hover{background:#3a3a6e}
         <span class="setup-desc">王手放置なし・取られる手を避ける・王手を優先</span>
       </div>
     </label>
+    <label class="setup-row">
+      <input type="radio" name="ai-level" value="level2">
+      <div class="setup-row-text">
+        <span class="setup-row-name">2手読み AI（minimax）</span>
+        <span class="setup-desc">α-β枝刈りで2手先まで読む。標準局面では速い</span>
+      </div>
+    </label>
+    <label class="setup-row">
+      <input type="radio" name="ai-level" value="level3">
+      <div class="setup-row-text">
+        <span class="setup-row-name">3手読み AI（minimax）</span>
+        <span class="setup-desc">3手先まで読む。終盤は遅くなる場合あり</span>
+      </div>
+    </label>
   </div>
 
   <button id="btn-start-game">ゲーム開始</button>
@@ -361,10 +456,33 @@ button:hover{background:#3a3a6e}
   <div id="winner-box">
     <h2 id="winner-title"></h2>
     <p id="winner-msg"></p>
+    <button id="btn-minimize-winner">盤面を確認する ▼</button>
+    <br><br>
     <button id="btn-play-again">もう一度</button>
   </div>
 </div>
 
-<script type="module" src="ui.js?v=4"></script>
+<!-- Winner mini bar（最小化時）-->
+<div id="winner-mini">
+  <span id="winner-mini-text"></span>
+  <button id="btn-winner-restore">▲ 結果を見る</button>
+  <button id="btn-winner-mini-again">もう一度</button>
+</div>
+
+<!-- Board Editor modal -->
+<div class="modal-overlay" id="editor-overlay"></div>
+<div class="modal-box" id="editor-modal">
+  <h2>盤面編集</h2>
+  <div id="editor-palette"></div>
+  <div id="editor-board-wrap"><div id="editor-board"></div></div>
+  <div class="editor-btns">
+    <button id="btn-editor-standard">標準配置</button>
+    <button id="btn-editor-clear">全消去</button>
+    <button id="btn-editor-done">✓ 配置完了</button>
+    <button id="btn-editor-cancel">キャンセル</button>
+  </div>
+</div>
+
+<script type="module" src="ui.js?v=5"></script>
 </body>
 </html>

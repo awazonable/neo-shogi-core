@@ -3,7 +3,7 @@
 
 import {
   deepClone, opp, makeToken, demoteType, nextRandom, CAN_PROMOTE,
-} from './engine.js?v=4';
+} from './engine.js?v=5';
 
 // 駒の点数（駒取り将棋用）
 const PIECE_POINTS = {
@@ -299,3 +299,142 @@ export const CaptureWinPlugin = (targetPoints = 20) => ({
     },
   },
 });
+
+// ── 追加駒プラグイン用 共通ユーティリティ ─────────────────────────
+// 8方向スライド（クイーン・飛び角用）
+function slideMoves(token, row, col, board, dirs) {
+  const moves = [];
+  for (const [dr, dc] of dirs) {
+    let r = row + dr, c = col + dc;
+    while (r >= 0 && r < 9 && c >= 0 && c < 9) {
+      const t = board[r][c].token;
+      if (!t) { moves.push({ row: r, col: c }); }
+      else { if (t.owner !== token.owner) moves.push({ row: r, col: c }); break; }
+      r += dr; c += dc;
+    }
+  }
+  return moves;
+}
+
+// ジャンプ移動（桂馬系）
+function jumpMoves(token, row, col, board, offsets) {
+  const moves = [];
+  for (const [dr, dc] of offsets) {
+    const r = row + dr, c = col + dc;
+    if (r < 0 || r > 8 || c < 0 || c > 8) continue;
+    const t = board[r][c].token;
+    if (!t || t.owner !== token.owner) moves.push({ row: r, col: c });
+  }
+  return moves;
+}
+
+// get_actions のボイラープレート（盤上の手 + 持ち駒打ち）
+function extraPieceActions(state, type, moveFn) {
+  const player = state.turn;
+  const extra = [];
+
+  // 盤上の駒の移動
+  for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
+    const token = state.board[r][c].token;
+    if (!token || token.owner !== player || token.type !== type) continue;
+    for (const dest of moveFn(token, r, c, state.board)) {
+      extra.push({ player, tag: 'move', payload: { from: { row:r, col:c }, to: dest, promote: false } });
+    }
+  }
+
+  // 持ち駒の打ち（持ち駒に type があるとき）
+  if (state.hands[player].some(t => t.type === type)) {
+    for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
+      if (!state.board[r][c].token)
+        extra.push({ player, tag: 'drop', payload: { type, to: { row:r, col:c } } });
+    }
+  }
+
+  return extra;
+}
+
+// ── 11. クイーン（女王）──────────────────────────────────────────
+// 全8方向スライダー。各プレイヤーの持ち駒として1枚追加。成れない。
+const Q_DIRS = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
+export const QueenPlugin = {
+  id: 'queen_piece', priority: -90,
+  meta: { name: 'クイーン追加', description: '全方向スライダー。各プレイヤーに持ち駒1枚追加（飛車+角の合体）' },
+  hooks: {
+    on_game_init(state) {
+      const s = deepClone(state);
+      s.hands.black.push(makeToken('Q', 'black'));
+      s.hands.white.push(makeToken('Q', 'white'));
+      return s;
+    },
+    get_actions(actions, state) {
+      return [...actions, ...extraPieceActions(state, 'Q',
+        (t, r, c, b) => slideMoves(t, r, c, b, Q_DIRS))];
+    },
+  },
+};
+
+// ── 12. 全方向桂（跳馬）─────────────────────────────────────────
+// チェスのナイトと同様に8方向に桂馬跳び。各プレイヤーに1枚追加。
+const CK_OFFSETS = [[-2,-1],[-2,1],[2,-1],[2,1],[-1,-2],[-1,2],[1,-2],[1,2]];
+export const CrazyKnightPlugin = {
+  id: 'crazy_knight', priority: -90,
+  meta: { name: '全方向桂追加', description: 'チェスのナイト同様、全8方向に桂馬跳び。各プレイヤーに1枚追加' },
+  hooks: {
+    on_game_init(state) {
+      const s = deepClone(state);
+      s.hands.black.push(makeToken('CK', 'black'));
+      s.hands.white.push(makeToken('CK', 'white'));
+      return s;
+    },
+    get_actions(actions, state) {
+      return [...actions, ...extraPieceActions(state, 'CK',
+        (t, r, c, b) => jumpMoves(t, r, c, b, CK_OFFSETS))];
+    },
+  },
+};
+
+// ── 13. 忍者（瞬間移動）─────────────────────────────────────────
+// 盤上の任意の空きマスへ瞬間移動、または任意の敵駒を取る。
+// 手駒には入れず、存在するだけでプレッシャーをかける変則駒。
+export const NinjaPlugin = {
+  id: 'ninja_piece', priority: -90,
+  meta: { name: '忍者追加', description: '任意の空きマスへ瞬間移動・任意の敵駒を取れる超機動駒。各プレイヤーに1枚追加' },
+  hooks: {
+    on_game_init(state) {
+      const s = deepClone(state);
+      s.hands.black.push(makeToken('NJ', 'black'));
+      s.hands.white.push(makeToken('NJ', 'white'));
+      return s;
+    },
+    get_actions(actions, state) {
+      const player = state.turn;
+      const extra = [];
+      let ninjaPos = null;
+      for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
+        const t = state.board[r][c].token;
+        if (t && t.owner === player && t.type === 'NJ') { ninjaPos = {r, c}; break; }
+      }
+      if (ninjaPos) {
+        const {r, c} = ninjaPos;
+        for (let tr = 0; tr < 9; tr++) for (let tc = 0; tc < 9; tc++) {
+          if (tr === r && tc === c) continue;
+          const target = state.board[tr][tc].token;
+          if (!target || target.owner !== player) {
+            extra.push({ player, tag: 'move', payload: { from:{row:r,col:c}, to:{row:tr,col:tc}, promote:false }});
+          }
+        }
+      }
+      // 打ち
+      if (state.hands[player].some(t => t.type === 'NJ')) {
+        for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
+          if (!state.board[r][c].token)
+            extra.push({ player, tag: 'drop', payload: { type:'NJ', to:{row:r,col:c} }});
+        }
+      }
+      return [...actions, ...extra];
+    },
+  },
+};
+
+// ── 追加駒の表示名（ui.js で利用）───────────────────────────────
+export const EXTRA_KANJI = { Q: '女', CK: '跳', NJ: '忍' };

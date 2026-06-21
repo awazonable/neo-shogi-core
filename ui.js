@@ -4,13 +4,13 @@
 import {
   NeoShogiEngine, resetUid, opp,
   KANJI, pieceKanji, promoType, makeToken, deepClone,
-} from './engine.js?v=6';
+} from './engine.js?v=7';
 
 import {
   StandardShogiPlugin,
   NoMovesWinPlugin,
   DoubleMovePlugin,
-} from './plugins.js?v=6';
+} from './plugins.js?v=7';
 
 import {
   randomAIChooseAction,
@@ -18,7 +18,7 @@ import {
   level2AIChooseAction,
   level3AIChooseAction,
   makeTimeLimitedAI,
-} from './ai.js?v=6';
+} from './ai.js?v=7';
 
 import {
   ReverseWinPlugin,
@@ -35,7 +35,7 @@ import {
   CrazyKnightPlugin, CrazyKnightMovePlugin,
   NinjaPlugin,      NinjaMovePlugin,
   EXTRA_KANJI,
-} from './plugins-extra.js?v=6';
+} from './plugins-extra.js?v=7';
 
 // ── UI State ─────────────────────────────────────────────────────
 let engine        = null;
@@ -613,7 +613,7 @@ function startNewGame() {
   const useShrink        = document.getElementById('opt-shrink')?.checked         || false;
   const useQueen         = document.getElementById('opt-queen')?.checked          || false;
   const useCrazyKnight   = document.getElementById('opt-crazy-knight')?.checked   || false;
-  const useNinja         = document.getElementById('opt-ninja')?.checked          || false;
+  const useNinja         = false; // 廃止（単調なゲームプレイのため）
   const aiLevel          = document.querySelector('input[name="ai-level"]:checked')?.value || 'level1';
 
   hideSetupModal();

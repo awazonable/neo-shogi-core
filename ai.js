@@ -1,7 +1,7 @@
 // ai.js — AI Layer (Neo将棋 v0.4)
 // RandomAI + Level1AI（王手放置なし・1手読み）
 
-import { opp, tokAt, getMoves, isKingInCheck, simulateAction } from './engine.js?v=6';
+import { opp, tokAt, getMoves, isKingInCheck, simulateAction, findKingPos } from './engine.js?v=7';
 
 // ── Random AI ─────────────────────────────────────────────────────
 // 合法手から取り手を60%優先してランダム選択
@@ -119,9 +119,40 @@ function unmakeMove(action, state, undo) {
   }
 }
 
+// ── 追加駒種の王手検出（make-unmake 版）──────────────────────────
+// isKingInCheck はエンジン組み込みの getMoves のみ参照するため、
+// クイーン・全方向桂などの追加駒種はここで個別に確認する。
+// ★ 新しい追加駒プラグインを作った場合: この関数にも検出ロジックを追加すること。
+//    詳細は PLUGIN_GUIDE.md の「AI 探索との連携」を参照。
+const _Q_DIRS  = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
+const _CK_OFFS = [[-2,-1],[-2,1],[2,-1],[2,1],[-1,-2],[-1,2],[1,-2],[1,2]];
+
+function isExtraCheck(state, player) {
+  const kp = findKingPos(state, player);
+  if (!kp) return false;
+  const op = opp(player);
+  for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
+    const t = state.board[r][c].token;
+    if (!t || t.owner !== op) continue;
+    if (t.type === 'Q') {
+      for (const [dr, dc] of _Q_DIRS) {
+        let nr = r + dr, nc = c + dc;
+        while (nr >= 0 && nr < 9 && nc >= 0 && nc < 9) {
+          if (nr === kp.row && nc === kp.col) return true;
+          if (state.board[nr][nc].token) break;
+          nr += dr; nc += dc;
+        }
+      }
+    } else if (t.type === 'CK') {
+      for (const [dr, dc] of _CK_OFFS) {
+        if (r + dr === kp.row && c + dc === kp.col) return true;
+      }
+    }
+  }
+  return false;
+}
+
 // ── 高速合法手生成（deepClone なし）─────────────────────────────
-// get_actions フックを直接呼び、check 検査だけ make-unmake で行う。
-// declare_double は探索から除外（AIは宣言しない）。
 function fastGetLegal(engine, state) {
   let actions = [];
   for (const p of engine.plugins) {
@@ -134,7 +165,8 @@ function fastGetLegal(engine, state) {
     .filter(a => a.tag !== 'declare_double')
     .filter(a => {
       const undo = makeMove(a, state);
-      const ok = !isKingInCheck(state, a.player);
+      // 標準駒 + 追加駒の両方で王手放置チェック（いずれも make-unmake で O(81) 程度）
+      const ok = !isKingInCheck(state, a.player) && !isExtraCheck(state, a.player);
       unmakeMove(a, state, undo);
       return ok;
     });

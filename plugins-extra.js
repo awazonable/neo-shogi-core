@@ -2,8 +2,8 @@
 // 各プラグインは独立。StandardShogiPlugin + NoMovesWinPlugin と任意で組み合わせ可能。
 
 import {
-  deepClone, opp, makeToken, demoteType, nextRandom, CAN_PROMOTE,
-} from './engine.js?v=6';
+  deepClone, opp, makeToken, demoteType, nextRandom, CAN_PROMOTE, findKingPos,
+} from './engine.js?v=7';
 
 // 駒の点数（駒取り将棋用）
 const PIECE_POINTS = {
@@ -353,6 +353,60 @@ function extraPieceActions(state, type, moveFn) {
   return extra;
 }
 
+// ── 追加駒 共通ユーティリティ ────────────────────────────────────
+// validate_action 用: 副作用なしでアクションを仮適用する（手駒追加は省略）
+function lightApply(action, state) {
+  const s = deepClone(state);
+  if (action.tag === 'move') {
+    const { from, to, promote } = action.payload;
+    const token = s.board[from.row]?.[from.col]?.token;
+    if (!token) return s;
+    s.board[from.row][from.col].token = null;
+    if (promote && !token.type.startsWith('+')) token.type = '+' + token.type;
+    s.board[to.row][to.col].token = token;
+  } else if (action.tag === 'drop') {
+    const { type, to } = action.payload;
+    const idx = s.hands[action.player].findIndex(t => t.type === type);
+    if (idx >= 0) {
+      const [token] = s.hands[action.player].splice(idx, 1);
+      s.board[to.row][to.col].token = { ...token };
+    }
+  }
+  return s;
+}
+
+// 王手検出: アクション後に指定駒種の敵駒が玉を狙っているか確認
+// type:   駒タイプ文字列
+// moveFn: (token, r, c, board) => [{row, col}]
+function exposesKingTo(action, state, type, moveFn) {
+  if (action.tag === 'declare_double') return false;
+  const next = lightApply(action, state);
+  const kp   = findKingPos(next, action.player);
+  if (!kp) return false;
+  const op = opp(action.player);
+  for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
+    const t = next.board[r][c].token;
+    if (!t || t.owner !== op || t.type !== type) continue;
+    if (moveFn(t, r, c, next.board).some(m => m.row === kp.row && m.col === kp.col)) return false;
+      // ← Note: returns false = invalid move (king in check)
+  }
+  return true; // king is safe from this piece type
+}
+// 上の関数のわかりやすいラッパー
+function notExposesKingTo(action, state, type, moveFn) {
+  if (action.tag === 'declare_double') return true;
+  const next = lightApply(action, state);
+  const kp   = findKingPos(next, action.player);
+  if (!kp) return true;
+  const op = opp(action.player);
+  for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
+    const t = next.board[r][c].token;
+    if (!t || t.owner !== op || t.type !== type) continue;
+    if (moveFn(t, r, c, next.board).some(m => m.row === kp.row && m.col === kp.col)) return false;
+  }
+  return true;
+}
+
 // ── 追加駒 共通: init なし（移動のみ）と フル版 ─────────────────
 // フル版 = 持ち駒追加 + 移動生成
 // Move-only 版 = 移動生成のみ（局面編集でカスタム配置された際に自動追加）
@@ -363,9 +417,14 @@ function queenGetActions(actions, state) {
   return [...actions, ...extraPieceActions(state, 'Q',
     (t, r, c, b) => slideMoves(t, r, c, b, Q_DIRS))];
 }
+// クイーンによる王手放置禁止: アクション後に敵クイーンが玉を射程内に捉えていれば不正
+function queenValidateAction(action, state) {
+  return notExposesKingTo(action, state, 'Q',
+    (t, r, c, b) => slideMoves(t, r, c, b, Q_DIRS));
+}
 export const QueenMovePlugin = {
   id: 'queen_move', priority: -90,
-  hooks: { get_actions: queenGetActions },
+  hooks: { get_actions: queenGetActions, validate_action: queenValidateAction },
 };
 export const QueenPlugin = {
   id: 'queen_piece', priority: -90,
@@ -378,6 +437,7 @@ export const QueenPlugin = {
       return s;
     },
     get_actions: queenGetActions,
+    validate_action: queenValidateAction,
   },
 };
 
@@ -387,9 +447,13 @@ function crazyKnightGetActions(actions, state) {
   return [...actions, ...extraPieceActions(state, 'CK',
     (t, r, c, b) => jumpMoves(t, r, c, b, CK_OFFSETS))];
 }
+function ckValidateAction(action, state) {
+  return notExposesKingTo(action, state, 'CK',
+    (t, r, c, b) => jumpMoves(t, r, c, b, CK_OFFSETS));
+}
 export const CrazyKnightMovePlugin = {
   id: 'crazy_knight_move', priority: -90,
-  hooks: { get_actions: crazyKnightGetActions },
+  hooks: { get_actions: crazyKnightGetActions, validate_action: ckValidateAction },
 };
 export const CrazyKnightPlugin = {
   id: 'crazy_knight', priority: -90,
@@ -402,6 +466,7 @@ export const CrazyKnightPlugin = {
       return s;
     },
     get_actions: crazyKnightGetActions,
+    validate_action: ckValidateAction,
   },
 };
 

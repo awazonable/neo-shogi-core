@@ -347,7 +347,7 @@ function startNewGame() {
 // ── Wire up DOM events ────────────────────────────────────────────
 document.getElementById('btn-new-game').addEventListener('click', showSetupModal);
 document.getElementById('btn-start-game').addEventListener('click', startNewGame);
-document.getElementById('btn-play-again').addEventListener('click', showSetupModal);
+document.getElementById('btn-play-again').addEventListener('click', () => { hideWinner(); showSetupModal(); });
 
 document.getElementById('btn-toggle-ai').addEventListener('click', () => {
   aiEnabled = !aiEnabled;

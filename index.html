@@ -19,6 +19,7 @@ body{
   background:var(--bg);color:var(--text);
   display:flex;flex-direction:column;align-items:center;
   min-height:100vh;padding:16px;gap:12px;
+  overflow-x:hidden;
 }
 h1{font-size:28px;letter-spacing:.2em;color:var(--accent);text-shadow:0 0 20px #cba6f755}
 #status{
@@ -146,14 +147,14 @@ button:hover{background:#3a3a6e}
   #status{min-width:unset;width:min(90vw,400px)}
   .game-wrap{flex-direction:column;align-items:center;gap:8px}
   .hand{
-    width:calc(var(--cell)*9 + 22px);min-height:unset;
+    width:calc(var(--cell)*9 + 18px);min-height:unset;
     padding:6px 8px;
   }
   .hand-label{margin-bottom:4px}
-  .modal-box{padding:20px 16px;width:min(calc(100vw - 24px),400px)}
+  .modal-box{padding:20px 16px;width:min(calc(100vw - 32px),400px)}
   #setup-modal{min-width:unset}
   #promo-dialog{min-width:unset}
-  #winner-box{padding:28px 20px}
+  #winner-box{padding:28px 20px;max-width:calc(100vw - 32px)}
   #winner-box h2{font-size:24px}
   #winner-box p{font-size:15px}
   .controls{gap:8px}

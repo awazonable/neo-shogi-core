@@ -208,11 +208,26 @@ export const DoubleMovePlugin = {
 
     after_action(action, state) {
       if (action.tag === 'declare_double') {
-        const used = { ...(state.global.doubleMoveUsed || {}) };
-        used['black'] = true;
         return {
           ...state,
-          global: { ...state.global, doubleMoveUsed: used, skipTurnChange: true },
+          global: {
+            ...state.global,
+            doubleMoveUsed: { ...(state.global.doubleMoveUsed || {}), black: true },
+            doubleMoveRemaining: 1,  // 宣言後1手ぶん skipTurnChange を残す
+            skipTurnChange: true,    // 宣言ステップ自体の手番交代を防ぐ
+          },
+        };
+      }
+      // 二手指し権利消化中：実際の指し手で skipTurnChange を消費
+      const remaining = state.global.doubleMoveRemaining || 0;
+      if (remaining > 0 && action.player === 'black') {
+        return {
+          ...state,
+          global: {
+            ...state.global,
+            doubleMoveRemaining: remaining - 1,
+            skipTurnChange: true,
+          },
         };
       }
       return state;

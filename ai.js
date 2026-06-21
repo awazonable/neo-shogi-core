@@ -1,7 +1,7 @@
 // ai.js — AI Layer (Neo将棋 v0.4)
 // RandomAI + Level1AI（王手放置なし・1手読み）
 
-import { opp, tokAt, getMoves, isKingInCheck, simulateAction } from './engine.js?v=5';
+import { opp, tokAt, getMoves, isKingInCheck, simulateAction } from './engine.js?v=6';
 
 // ── Random AI ─────────────────────────────────────────────────────
 // 合法手から取り手を60%優先してランダム選択
@@ -197,6 +197,67 @@ export function level2AIChooseAction(engine) { return minimaxRoot(engine, 1); }
 
 // ── Level3 AI（3手読み）─────────────────────────────────────────
 export function level3AIChooseAction(engine) { return minimaxRoot(engine, 2); }
+
+// ── 時間制限AI（iterative deepening）────────────────────────────
+// 深さ1から順に完全探索し、残り時間がなくなった時点で最後に完成した深さの最善手を返す。
+const TO = Symbol('timeout');
+
+function minimaxTimed(engine, state, depth, alpha, beta, rootPlayer, deadline) {
+  if (Date.now() >= deadline) return TO;
+
+  if (!kingAlive(state, 'black')) return rootPlayer === 'white' ? 999999 : -999999;
+  if (!kingAlive(state, 'white')) return rootPlayer === 'black' ? 999999 : -999999;
+  if (depth === 0) return evalBoard(state, rootPlayer);
+
+  const actions = sortByCapture(fastGetLegal(engine, state), state);
+  if (!actions.length) return state.turn === rootPlayer ? -999999 : 999999;
+
+  const isMax = state.turn === rootPlayer;
+  let best = isMax ? -Infinity : Infinity;
+
+  for (const action of actions) {
+    const undo = makeMove(action, state);
+    const score = minimaxTimed(engine, state, depth - 1, alpha, beta, rootPlayer, deadline);
+    unmakeMove(action, state, undo);
+    if (score === TO) return TO;
+    if (isMax) { if (score > best) { best = score; if (best > alpha) alpha = best; } }
+    else        { if (score < best) { best = score; if (best < beta)  beta  = best; } }
+    if (alpha >= beta) break;
+  }
+  return best;
+}
+
+function timeLimitedAIChooseAction(engine, timeLimitMs) {
+  const rootActions = sortByCapture(engine.getLegalActions(), engine.state);
+  if (!rootActions.length) return null;
+  const player = engine.state.turn;
+  const st = JSON.parse(JSON.stringify(engine.state));
+  const deadline = Date.now() + timeLimitMs;
+
+  let bestAction = rootActions[0];
+
+  for (let depth = 1; depth <= 20; depth++) {
+    if (Date.now() >= deadline) break;
+    let depthBest = -Infinity, depthBestAction = null, timedOut = false;
+
+    for (const action of rootActions) {
+      if (Date.now() >= deadline) { timedOut = true; break; }
+      const undo = makeMove(action, st);
+      const score = minimaxTimed(engine, st, depth - 1, -Infinity, Infinity, player, deadline);
+      unmakeMove(action, st, undo);
+      if (score === TO) { timedOut = true; break; }
+      if (score > depthBest) { depthBest = score; depthBestAction = action; }
+    }
+    if (!timedOut && depthBestAction) bestAction = depthBestAction;
+    if (timedOut) break;
+  }
+  return bestAction;
+}
+
+// ファクトリ：timeLimitMs をクロージャで持つ AI 関数を返す
+export function makeTimeLimitedAI(timeLimitMs = 10000) {
+  return (engine) => timeLimitedAIChooseAction(engine, timeLimitMs);
+}
 
 // ── Level1 AI ─────────────────────────────────────────────────────
 // getLegalActions() は validate_action 済みなので王手放置は既に除外されている。

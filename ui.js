@@ -4,20 +4,21 @@
 import {
   NeoShogiEngine, resetUid, opp,
   KANJI, pieceKanji, promoType, makeToken, deepClone,
-} from './engine.js?v=5';
+} from './engine.js?v=6';
 
 import {
   StandardShogiPlugin,
   NoMovesWinPlugin,
   DoubleMovePlugin,
-} from './plugins.js?v=5';
+} from './plugins.js?v=6';
 
 import {
   randomAIChooseAction,
   level1AIChooseAction,
   level2AIChooseAction,
   level3AIChooseAction,
-} from './ai.js?v=5';
+  makeTimeLimitedAI,
+} from './ai.js?v=6';
 
 import {
   ReverseWinPlugin,
@@ -34,7 +35,7 @@ import {
   CrazyKnightPlugin,
   NinjaPlugin,
   EXTRA_KANJI,
-} from './plugins-extra.js?v=5';
+} from './plugins-extra.js?v=6';
 
 // ── UI State ─────────────────────────────────────────────────────
 let engine        = null;
@@ -48,9 +49,31 @@ let aiChooseFn    = level1AIChooseAction;
 let hasDoubleMove = false;
 let captureWinActive = false;
 
-// ── 追加駒のカナ表示 ──────────────────────────────────────────────
+// ── 2文字駒名 ────────────────────────────────────────────────────
+let useTwoCharLabels = false;
+const KANJI_2 = {
+  P:'歩兵', '+P':'と金', L:'香車', '+L':'成香', N:'桂馬', '+N':'成桂',
+  S:'銀将', '+S':'成銀', G:'金将', '+G':'金将', B:'角行', '+B':'龍馬',
+  R:'飛車', '+R':'龍王', Q:'女王', CK:'跳馬', NJ:'忍者',
+};
+
 function pieceKanjiEx(token) {
+  if (useTwoCharLabels) {
+    if (token.type === 'K') return token.owner === 'black' ? '王将' : '玉将';
+    return KANJI_2[token.type] || EXTRA_KANJI[token.type] || pieceKanji(token);
+  }
   return EXTRA_KANJI[token.type] || pieceKanji(token);
+}
+
+// ── 棋譜（リプレイ）────────────────────────────────────────────
+// replayHistory[0] = ゲーム開始直後の state
+// replayHistory[N] = N手目の action 後の state
+let replayHistory = [];    // { action, state }[]
+let replayIndex   = -1;    // -1 = 再生中ではない
+let replayDisplayState = null; // null = engine.state を使用
+
+function getRenderState() {
+  return replayDisplayState || engine.state;
 }
 
 // ── カスタム初期配置 ──────────────────────────────────────────────
@@ -117,10 +140,10 @@ function renderAll() {
 function renderBoard() {
   const boardEl = document.getElementById('board');
   boardEl.innerHTML = '';
-  const state = engine.state;
+  const state = getRenderState();
   const lm    = state.global.lastMove;
   const bound = state.global.shrinkBound || 0;
-  const expl  = state.global.lastExplosion; // 爆発エフェクト用
+  const expl  = state.global.lastExplosion;
 
   for (let r=0; r<9; r++) {
     for (let c=0; c<9; c++) {
@@ -128,8 +151,8 @@ function renderBoard() {
       cell.className = 'cell';
 
       const isShrunk   = bound > 0 && (r < bound || r >= 9-bound || c < bound || c >= 9-bound);
-      const isSelBoard = selectedCell?.type==='board' && selectedCell.row===r && selectedCell.col===c;
-      const isLegal    = !isShrunk && legalDests.has(`${r},${c}`);
+      const isSelBoard = !replayDisplayState && selectedCell?.type==='board' && selectedCell.row===r && selectedCell.col===c;
+      const isLegal    = !isShrunk && !replayDisplayState && legalDests.has(`${r},${c}`);
       const isLastFrom = lm?.from && lm.from.row===r && lm.from.col===c;
       const isLastTo   = lm?.to   && lm.to.row===r   && lm.to.col===c;
       const isExploded = expl && Math.abs(r-expl.row)<=1 && Math.abs(c-expl.col)<=1;
@@ -146,7 +169,8 @@ function renderBoard() {
         const piece = document.createElement('div');
         piece.className = 'piece' +
           (token.owner==='white' ? ' white' : '') +
-          (token.type.startsWith('+') ? ' promo' : '');
+          (token.type.startsWith('+') ? ' promo' : '') +
+          (useTwoCharLabels ? ' two-char' : '');
         piece.textContent = pieceKanjiEx(token);
         cell.appendChild(piece);
       }
@@ -165,7 +189,7 @@ function renderHands() {
 function renderHand(player) {
   const el = document.getElementById(player + '-pieces');
   el.innerHTML = '';
-  const hand   = engine.state.hands[player];
+  const hand   = getRenderState().hands[player];
   const counts = {};
   for (const t of hand) counts[t.type] = (counts[t.type]||0) + 1;
   const entries = Object.entries(counts);
@@ -308,10 +332,14 @@ function handleHandClick(player, pieceType) {
 }
 
 // ── Action execution ─────────────────────────────────────────────
+function pushHistory(action) {
+  replayHistory.push({ action, state: deepClone(engine.state) });
+}
+
 function executeAction(action) {
   clearSel();
   const result = engine.step(action);
-  // engine.step が check_end を呼び、NoMovesWinPlugin も含めて判定済み
+  pushHistory(action);
   if (result) {
     gameOver = result;
     renderAll();
@@ -332,7 +360,6 @@ function doAITurn() {
   isAITurn = false;
 
   if (!action) {
-    // AI に合法手がない（NoMovesWinPlugin が check_end で処理するはずだが念のため）
     gameOver = 'black';
     renderAll();
     showWinner('black');
@@ -340,6 +367,7 @@ function doAITurn() {
   }
 
   const result = engine.step(action);
+  pushHistory(action);
   if (result) {
     gameOver = result;
     renderAll();
@@ -348,8 +376,6 @@ function doAITurn() {
   }
   renderAll();
 
-  // turn が white のまま（skipTurnChange が起きた場合）は再スケジュール
-  // 例：将来的なプラグインで白にも特殊アクションが追加された場合の保険
   if (aiEnabled && engine.state.turn === 'white' && !gameOver) {
     isAITurn = true;
     renderStatus();
@@ -384,6 +410,61 @@ function showWinner(winner) {
   document.getElementById('winner-mini-text').textContent = title;
   document.getElementById('winner-mini').style.display = 'none';
   document.getElementById('winner-overlay').classList.add('show');
+}
+
+// ── 棋譜再生 ─────────────────────────────────────────────────────
+function enterReplay() {
+  if (!replayHistory.length) return;
+  replayIndex = replayHistory.length - 1;       // 最終局面から
+  replayDisplayState = replayHistory[replayIndex].state;
+  hideWinner();
+  document.getElementById('replay-controls').classList.add('show');
+  renderAll();
+  updateReplayInfo();
+}
+
+function exitReplay() {
+  replayIndex       = -1;
+  replayDisplayState = null;
+  document.getElementById('replay-controls').classList.remove('show');
+  renderAll();
+  if (gameOver) showWinner(gameOver);
+}
+
+function stepReplay(delta) {
+  const next = Math.max(0, Math.min(replayHistory.length - 1, replayIndex + delta));
+  replayIndex       = next;
+  replayDisplayState = replayHistory[next].state;
+  renderAll();
+  updateReplayInfo();
+}
+
+function updateReplayInfo() {
+  const total = replayHistory.length - 1;
+  const cur   = replayIndex;
+  const h     = replayHistory[cur];
+  let label = `${cur}/${total} 手`;
+  if (h.action && h.action.player) {
+    label += ` (${h.action.player === 'black' ? '先手' : '後手'})`;
+  }
+  document.getElementById('replay-info').textContent = label;
+}
+
+function exportGame() {
+  const data = {
+    format:  'NeoShogi-v1',
+    date:    new Date().toISOString().split('T')[0],
+    result:  gameOver || 'unknown',
+    plugins: engine.plugins.map(p => p.id),
+    moves:   replayHistory.slice(1).map(h => h.action).filter(Boolean),
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = Object.assign(document.createElement('a'), {
+    href: url, download: `neo-shogi-${Date.now()}.json`
+  });
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function hideWinner() {
@@ -424,6 +505,15 @@ function closeEditor() {
   document.getElementById('editor-modal').style.display   = 'none';
 }
 
+function getActivePieceTypes() {
+  // 現在の設定モーダルで有効になっている追加駒のタイプを返す
+  const extra = [];
+  if (document.getElementById('opt-queen')?.checked)        extra.push('Q');
+  if (document.getElementById('opt-crazy-knight')?.checked) extra.push('CK');
+  if (document.getElementById('opt-ninja')?.checked)        extra.push('NJ');
+  return extra;
+}
+
 function buildPalette() {
   const el = document.getElementById('editor-palette');
   el.innerHTML = '';
@@ -436,18 +526,23 @@ function buildPalette() {
   eraser.onclick = () => { selectedPalette = null; buildPalette(); };
   el.appendChild(eraser);
 
-  // 先手・後手それぞれのラベル + 駒タイル
+  // 追加駒タイプ（プラグイン選択中のもの）も含める
+  const allTypes = [...PALETTE_PIECES, ...getActivePieceTypes()];
+
   for (const owner of ['black', 'white']) {
     const lbl = document.createElement('div');
     lbl.className = 'palette-group-label';
     lbl.textContent = owner === 'black' ? '先手(黒)' : '後手(白)';
     el.appendChild(lbl);
 
-    for (const type of PALETTE_PIECES) {
+    for (const type of allTypes) {
       const tile = document.createElement('div');
       const isSel = selectedPalette?.type === type && selectedPalette?.owner === owner;
       tile.className = 'palette-tile' + (owner === 'white' ? ' white-piece' : '') + (isSel ? ' selected' : '');
-      tile.textContent = EXTRA_KANJI[type] || KANJI[type] || type;
+      const kanji = useTwoCharLabels
+        ? (type === 'K' ? (owner === 'black' ? '王将' : '玉将') : KANJI_2[type] || EXTRA_KANJI[type] || type)
+        : (EXTRA_KANJI[type] || KANJI[type] || type);
+      tile.textContent = kanji;
       tile.title = `${owner === 'black' ? '先手' : '後手'} ${type}`;
       tile.onclick = () => { selectedPalette = { type, owner }; buildPalette(); };
       el.appendChild(tile);
@@ -526,8 +621,14 @@ function startNewGame() {
   hasDoubleMove    = useDoubleMove;
   captureWinActive = winCond === 'capture';
   aiEnabled        = true;
-  aiChooseFn = { random: randomAIChooseAction, level1: level1AIChooseAction,
-                 level2: level2AIChooseAction, level3: level3AIChooseAction }[aiLevel] || level1AIChooseAction;
+  const timeSec = parseInt(document.getElementById('ai-time-sec')?.value) || 10;
+  aiChooseFn = {
+    random:    randomAIChooseAction,
+    level1:    level1AIChooseAction,
+    level2:    level2AIChooseAction,
+    level3:    level3AIChooseAction,
+    timelimit: makeTimeLimitedAI(timeSec * 1000),
+  }[aiLevel] || level1AIChooseAction;
 
   resetUid();
   engine = new NeoShogiEngine();
@@ -569,6 +670,13 @@ function startNewGame() {
   if (customLayout) engine.use(makeCustomInitPlugin(customLayout));
 
   engine.init();
+
+  // 棋譜リセット
+  replayHistory     = [{ action: null, state: deepClone(engine.state) }];
+  replayIndex       = -1;
+  replayDisplayState = null;
+  document.getElementById('replay-controls').classList.remove('show');
+
   buildLabels();
   renderAll();
 }
@@ -609,6 +717,32 @@ document.getElementById('btn-editor-clear').addEventListener('click', () => {
 document.getElementById('btn-clear-editor').addEventListener('click', () => {
   customLayout = null;
   updateCustomLayoutBadge();
+});
+
+// 棋譜再生
+document.getElementById('btn-view-kifu').addEventListener('click', enterReplay);
+document.getElementById('btn-mini-kifu').addEventListener('click', enterReplay);
+document.getElementById('btn-replay-start').addEventListener('click', () => stepReplay(-9999));
+document.getElementById('btn-replay-prev').addEventListener('click',  () => stepReplay(-1));
+document.getElementById('btn-replay-next').addEventListener('click',  () => stepReplay(+1));
+document.getElementById('btn-replay-end').addEventListener('click',   () => stepReplay(+9999));
+document.getElementById('btn-replay-export').addEventListener('click', exportGame);
+document.getElementById('btn-replay-exit').addEventListener('click',   exitReplay);
+
+// 2文字駒名トグル
+document.getElementById('btn-toggle-labels').addEventListener('click', () => {
+  useTwoCharLabels = !useTwoCharLabels;
+  document.getElementById('btn-toggle-labels').textContent =
+    useTwoCharLabels ? '駒名: 2字' : '駒名: 1字';
+  renderAll();
+});
+
+// 時間制限AI: ラジオ変更で入力フィールド表示切り替え
+document.querySelectorAll('input[name="ai-level"]').forEach(r => {
+  r.addEventListener('change', () => {
+    const show = document.querySelector('input[name="ai-level"]:checked')?.value === 'timelimit';
+    document.getElementById('timelimit-row').style.display = show ? '' : 'none';
+  });
 });
 
 document.getElementById('btn-toggle-ai').addEventListener('click', () => {

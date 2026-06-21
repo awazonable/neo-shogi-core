@@ -6,7 +6,7 @@ import {
   makeToken, makeBoard, PIECE_TAGS,
   CAN_PROMOTE, promoType, demoteType, inPromoZone, mustPromo,
   getMoves, isKingInCheck, simulateAction,
-} from './engine.js?v=5';
+} from './engine.js?v=6';
 
 // ── Initial position (standard shogi SFEN start) ──────────────────
 const INIT_SETUP = [

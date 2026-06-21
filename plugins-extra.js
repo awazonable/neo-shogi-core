@@ -3,7 +3,7 @@
 
 import {
   deepClone, opp, makeToken, demoteType, nextRandom, CAN_PROMOTE,
-} from './engine.js?v=5';
+} from './engine.js?v=6';
 
 // 駒の点数（駒取り将棋用）
 const PIECE_POINTS = {

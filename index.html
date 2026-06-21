@@ -141,6 +141,16 @@ button:hover{background:#3a3a6e}
   border-radius:8px;letter-spacing:.05em;
 }
 #btn-start-game:hover{background:#b892e0}
+/* ── 2文字駒名 ──────────────────────────── */
+.piece.two-char{font-size:calc(var(--cell)*.28);letter-spacing:-1px}
+/* ── 棋譜コントロール ───────────────────── */
+#replay-controls{
+  display:none;gap:6px;align-items:center;flex-wrap:wrap;justify-content:center;
+  padding:6px 12px;background:var(--panel);border:1px solid #ffffff22;
+  border-radius:20px;margin-top:4px;
+}
+#replay-controls.show{display:flex}
+#replay-info{font-size:13px;color:var(--subtext);min-width:80px;text-align:center}
 /* ── SHRINK / SCORE ─────────────────────── */
 .cell.shrunk{background:rgba(0,0,0,.55)!important;cursor:not-allowed;opacity:.45}
 .cell.exploded{background:rgba(255,100,0,.5)!important}
@@ -258,7 +268,17 @@ button:hover{background:#3a3a6e}
 <div class="controls">
   <button id="btn-new-game">新しいゲーム</button>
   <button id="btn-toggle-ai">AI: <span id="ai-toggle-label">ON</span></button>
+  <button id="btn-toggle-labels">駒名: 1字</button>
   <button id="btn-declare-double" style="display:none">二手指し宣言</button>
+</div>
+<div id="replay-controls">
+  <button id="btn-replay-start">|◀</button>
+  <button id="btn-replay-prev">◀</button>
+  <span id="replay-info"></span>
+  <button id="btn-replay-next">▶</button>
+  <button id="btn-replay-end">▶|</button>
+  <button id="btn-replay-export">⬇ 棋譜保存</button>
+  <button id="btn-replay-exit">✕</button>
 </div>
 
 <!-- Shared modal overlay -->
@@ -446,6 +466,20 @@ button:hover{background:#3a3a6e}
         <span class="setup-desc">3手先まで読む。終盤は遅くなる場合あり</span>
       </div>
     </label>
+    <label class="setup-row">
+      <input type="radio" name="ai-level" value="timelimit">
+      <div class="setup-row-text">
+        <span class="setup-row-name">時間制限AI（iterative deepening）</span>
+        <span class="setup-desc">設定秒数の間だけ読み続け、その時点の最善手を指す</span>
+      </div>
+    </label>
+    <div id="timelimit-row" style="display:none;padding:4px 8px 4px 32px;align-items:center;gap:8px">
+      <span style="font-size:13px;color:var(--subtext)">思考時間:</span>
+      <input type="number" id="ai-time-sec" value="10" min="1" max="60"
+        style="width:50px;background:#1a1a3a;border:1px solid #ffffff33;color:var(--text);
+               border-radius:4px;padding:2px 6px;font-size:13px">
+      <span style="font-size:13px;color:var(--subtext)">秒</span>
+    </div>
   </div>
 
   <button id="btn-start-game">ゲーム開始</button>
@@ -456,8 +490,11 @@ button:hover{background:#3a3a6e}
   <div id="winner-box">
     <h2 id="winner-title"></h2>
     <p id="winner-msg"></p>
-    <button id="btn-minimize-winner">盤面を確認する ▼</button>
-    <br><br>
+    <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+      <button id="btn-view-kifu">棋譜を見る ▶</button>
+      <button id="btn-minimize-winner">盤面を確認 ▼</button>
+    </div>
+    <br>
     <button id="btn-play-again">もう一度</button>
   </div>
 </div>
@@ -466,6 +503,7 @@ button:hover{background:#3a3a6e}
 <div id="winner-mini">
   <span id="winner-mini-text"></span>
   <button id="btn-winner-restore">▲ 結果を見る</button>
+  <button id="btn-mini-kifu">棋譜</button>
   <button id="btn-winner-mini-again">もう一度</button>
 </div>
 
@@ -483,6 +521,6 @@ button:hover{background:#3a3a6e}
   </div>
 </div>
 
-<script type="module" src="ui.js?v=5"></script>
+<script type="module" src="ui.js?v=6"></script>
 </body>
 </html>

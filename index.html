@@ -12,6 +12,7 @@
   --black-text:#1a1a1a;--promoted:#cc2200;
   --sel:#4caf50;--legal:#2196f3;--hover:#ffffff33;
   --text:#cdd6f4;--subtext:#a6adc8;--accent:#cba6f7;
+  --cell:min(60px,calc((100vw - 50px) / 9));
 }
 body{
   font-family:'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif;
@@ -47,17 +48,17 @@ h1{font-size:28px;letter-spacing:.2em;color:var(--accent);text-shadow:0 0 20px #
 /* ── BOARD ──────────────────────────────── */
 .board-outer{display:flex;flex-direction:column;align-items:center;gap:4px}
 .col-labels{display:flex;padding:0 0 0 18px}
-.col-label{width:60px;text-align:center;font-size:12px;color:var(--subtext)}
+.col-label{width:var(--cell);text-align:center;font-size:12px;color:var(--subtext)}
 .board-row-wrap{display:flex;align-items:stretch}
 .row-labels{display:flex;flex-direction:column;padding-top:0}
-.row-label{height:60px;width:18px;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--subtext)}
+.row-label{height:var(--cell);width:18px;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--subtext)}
 #board{
-  display:grid;grid-template-columns:repeat(9,60px);grid-template-rows:repeat(9,60px);
+  display:grid;grid-template-columns:repeat(9,var(--cell));grid-template-rows:repeat(9,var(--cell));
   background:var(--board);border:3px solid var(--border);
   box-shadow:0 8px 32px rgba(0,0,0,.6),inset 0 0 40px rgba(0,0,0,.1);
 }
 .cell{
-  width:60px;height:60px;border:1px solid rgba(92,51,23,.35);
+  width:var(--cell);height:var(--cell);border:1px solid rgba(92,51,23,.35);
   display:flex;align-items:center;justify-content:center;
   cursor:pointer;transition:background-color .1s;position:relative;
 }
@@ -70,10 +71,10 @@ h1{font-size:28px;letter-spacing:.2em;color:var(--accent);text-shadow:0 0 20px #
 .cell.last-to{background:rgba(255,200,50,.4)}
 /* ── PIECE ──────────────────────────────── */
 .piece{
-  width:52px;height:52px;background:var(--piece-bg);
+  width:calc(var(--cell)*.867);height:calc(var(--cell)*.867);background:var(--piece-bg);
   border:1px solid var(--piece-border);border-radius:3px;
   display:flex;align-items:center;justify-content:center;
-  font-size:22px;font-weight:700;color:var(--black-text);
+  font-size:calc(var(--cell)*.367);font-weight:700;color:var(--black-text);
   box-shadow:1px 2px 3px rgba(0,0,0,.35);
   pointer-events:none;user-select:none;
   clip-path:polygon(50% 0%,97% 18%,100% 100%,0% 100%,3% 18%);
@@ -139,6 +140,25 @@ button:hover{background:#3a3a6e}
   border-radius:8px;letter-spacing:.05em;
 }
 #btn-start-game:hover{background:#b892e0}
+/* ── MOBILE ─────────────────────────────── */
+@media(max-width:820px){
+  h1{font-size:20px}
+  #status{min-width:unset;width:min(90vw,400px)}
+  .game-wrap{flex-direction:column;align-items:center;gap:8px}
+  .hand{
+    width:calc(var(--cell)*9 + 22px);min-height:unset;
+    padding:6px 8px;
+  }
+  .hand-label{margin-bottom:4px}
+  .modal-box{padding:20px 16px;width:min(calc(100vw - 24px),400px)}
+  #setup-modal{min-width:unset}
+  #promo-dialog{min-width:unset}
+  #winner-box{padding:28px 20px}
+  #winner-box h2{font-size:24px}
+  #winner-box p{font-size:15px}
+  .controls{gap:8px}
+  button{padding:8px 12px;font-size:13px}
+}
 /* ── WINNER ─────────────────────────────── */
 #winner-overlay{
   display:none;position:fixed;inset:0;background:#00000099;z-index:200;

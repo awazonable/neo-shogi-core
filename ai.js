@@ -1,7 +1,7 @@
 // ai.js — AI Layer (Neo将棋 v0.4)
 // RandomAI + Level1AI（王手放置なし・1手読み）
 
-import { opp, tokAt, getMoves, isKingInCheck, simulateAction } from './engine.js';
+import { opp, tokAt, getMoves, isKingInCheck, simulateAction } from './engine.js?v=3';
 
 // ── Random AI ─────────────────────────────────────────────────────
 // 合法手から取り手を60%優先してランダム選択

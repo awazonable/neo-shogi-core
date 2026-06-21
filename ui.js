@@ -4,18 +4,18 @@
 import {
   NeoShogiEngine, resetUid, opp,
   KANJI, pieceKanji, promoType,
-} from './engine.js';
+} from './engine.js?v=3';
 
 import {
   StandardShogiPlugin,
   NoMovesWinPlugin,
   DoubleMovePlugin,
-} from './plugins.js';
+} from './plugins.js?v=3';
 
 import {
   randomAIChooseAction,
   level1AIChooseAction,
-} from './ai.js';
+} from './ai.js?v=3';
 
 // ── UI State ─────────────────────────────────────────────────────
 let engine       = null;

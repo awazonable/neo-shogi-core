@@ -4,29 +4,43 @@
 import {
   NeoShogiEngine, resetUid, opp,
   KANJI, pieceKanji, promoType,
-} from './engine.js?v=3';
+} from './engine.js?v=4';
 
 import {
   StandardShogiPlugin,
   NoMovesWinPlugin,
   DoubleMovePlugin,
-} from './plugins.js?v=3';
+} from './plugins.js?v=4';
 
 import {
   randomAIChooseAction,
   level1AIChooseAction,
-} from './ai.js?v=3';
+} from './ai.js?v=4';
+
+import {
+  ReverseWinPlugin,
+  ExplosivePiecePlugin,
+  KamikazePlugin,
+  ExileOnCapturePlugin,
+  DefectionPlugin,
+  BerserkerPlugin,
+  PromoteAnywherePlugin,
+  ShrinkBoardPlugin,
+  GravityPlugin,
+  CaptureWinPlugin,
+} from './plugins-extra.js?v=4';
 
 // ── UI State ─────────────────────────────────────────────────────
-let engine       = null;
-let selectedCell = null;   // {type:'board',row,col} | {type:'hand',player,pieceType}
-let legalActions = [];
-let legalDests   = new Set();
-let gameOver     = false;
-let isAITurn     = false;
-let aiEnabled    = true;
-let aiChooseFn   = level1AIChooseAction;
+let engine        = null;
+let selectedCell  = null;   // {type:'board',row,col} | {type:'hand',player,pieceType}
+let legalActions  = [];
+let legalDests    = new Set();
+let gameOver      = false;
+let isAITurn      = false;
+let aiEnabled     = true;
+let aiChooseFn    = level1AIChooseAction;
 let hasDoubleMove = false;
+let captureWinActive = false;
 
 const COL_KANJI = ['9','8','7','6','5','4','3','2','1'];
 const ROW_KANJI = ['一','二','三','四','五','六','七','八','九'];
@@ -62,20 +76,26 @@ function renderBoard() {
   const boardEl = document.getElementById('board');
   boardEl.innerHTML = '';
   const state = engine.state;
-  const lm = state.global.lastMove;
+  const lm    = state.global.lastMove;
+  const bound = state.global.shrinkBound || 0;
+  const expl  = state.global.lastExplosion; // 爆発エフェクト用
 
   for (let r=0; r<9; r++) {
     for (let c=0; c<9; c++) {
       const cell = document.createElement('div');
       cell.className = 'cell';
 
+      const isShrunk   = bound > 0 && (r < bound || r >= 9-bound || c < bound || c >= 9-bound);
       const isSelBoard = selectedCell?.type==='board' && selectedCell.row===r && selectedCell.col===c;
-      const isLegal    = legalDests.has(`${r},${c}`);
+      const isLegal    = !isShrunk && legalDests.has(`${r},${c}`);
       const isLastFrom = lm?.from && lm.from.row===r && lm.from.col===c;
       const isLastTo   = lm?.to   && lm.to.row===r   && lm.to.col===c;
+      const isExploded = expl && Math.abs(r-expl.row)<=1 && Math.abs(c-expl.col)<=1;
 
-      if (isSelBoard)       cell.classList.add('sel');
+      if (isShrunk)         cell.classList.add('shrunk');
+      else if (isSelBoard)  cell.classList.add('sel');
       else if (isLegal)     cell.classList.add('legal');
+      else if (isExploded)  cell.classList.add('exploded');
       else if (isLastFrom)  cell.classList.add('last-from');
       else if (isLastTo)    cell.classList.add('last-to');
 
@@ -139,13 +159,32 @@ function renderHand(player) {
 
 function renderStatus() {
   const el = document.getElementById('status');
+  const scoreBar = document.getElementById('score-bar');
+
+  // スコアバー（駒取り将棋）
+  if (captureWinActive && engine) {
+    const sc = engine.state.global.captureScores || { black: 0, white: 0 };
+    scoreBar.style.display = '';
+    scoreBar.textContent = `先手 ${sc.black||0}点 ／ 後手 ${sc.white||0}点（目標:20点）`;
+  } else {
+    scoreBar.style.display = 'none';
+  }
+
   if (gameOver) {
     el.textContent = gameOver==='black' ? '先手(黒)の勝ち！' : '後手(白)の勝ち！';
     return;
   }
   if (isAITurn) { el.textContent = 'AIが考えています…'; return; }
   const turn = engine.state.turn;
-  el.textContent = turn==='black' ? '先手(黒)のターン' : '後手(白)のターン (AI)';
+  // 縮小将棋: 残り手数ヒント
+  const bound = engine.state.global.shrinkBound || 0;
+  const nextShrink = 10 - (engine.state.moveCount % 10);
+  const shrinkHint = bound > 0 || nextShrink <= 10
+    ? (bound > 0 ? ` ／ 縮小Lv${bound}` : '') + ` ／ 次縮小まで${nextShrink}手`
+    : '';
+  const base = turn==='black' ? '先手(黒)のターン' : '後手(白)のターン (AI)';
+  el.textContent = engine.state.global.shrinkBound !== undefined || document.getElementById('opt-shrink')?.checked
+    ? base + shrinkHint : base;
 }
 
 function renderDoubleBtn() {
@@ -320,26 +359,61 @@ function hideSetupModal() {
 
 // ── Game initialization ───────────────────────────────────────────
 function startNewGame() {
-  const useDoubleMove = document.getElementById('opt-double-move')?.checked || false;
-  const aiLevel       = document.querySelector('input[name="ai-level"]:checked')?.value || 'level1';
+  const winCond          = document.querySelector('input[name="win-condition"]:checked')?.value || 'standard';
+  const useDoubleMove    = document.getElementById('opt-double-move')?.checked    || false;
+  const useExplosive     = document.getElementById('opt-explosive')?.checked      || false;
+  const useKamikaze      = document.getElementById('opt-kamikaze')?.checked       || false;
+  const useExile         = document.getElementById('opt-exile')?.checked          || false;
+  const useDefection     = document.getElementById('opt-defection')?.checked      || false;
+  const useBerserker     = document.getElementById('opt-berserker')?.checked      || false;
+  const usePromoAnywhere = document.getElementById('opt-promote-anywhere')?.checked || false;
+  const useGravity       = document.getElementById('opt-gravity')?.checked        || false;
+  const useShrink        = document.getElementById('opt-shrink')?.checked         || false;
+  const aiLevel          = document.querySelector('input[name="ai-level"]:checked')?.value || 'level1';
 
   hideSetupModal();
   hideWinner();
   hidePromoDialog();
   clearSel();
-  gameOver      = false;
-  isAITurn      = false;
-  hasDoubleMove = useDoubleMove;
-  aiEnabled     = true;
-  aiChooseFn    = aiLevel === 'level1' ? level1AIChooseAction : randomAIChooseAction;
+  gameOver         = false;
+  isAITurn         = false;
+  hasDoubleMove    = useDoubleMove;
+  captureWinActive = winCond === 'capture';
+  aiEnabled        = true;
+  aiChooseFn       = aiLevel === 'level1' ? level1AIChooseAction : randomAIChooseAction;
 
   resetUid();
   engine = new NeoShogiEngine();
   engine.use(StandardShogiPlugin);
-  engine.use(NoMovesWinPlugin);       // 詰み・ステイルメイト判定（常時）
-  if (useDoubleMove) engine.use(DoubleMovePlugin);
-  engine.init();
 
+  // ── 勝利条件 ──────────────────────────────
+  if (winCond === 'reverse') {
+    engine.use(ReverseWinPlugin);
+  } else if (winCond === 'capture') {
+    engine.use(CaptureWinPlugin(20));
+    engine.use(NoMovesWinPlugin);  // フォールバック（手詰まり時）
+  } else {
+    engine.use(NoMovesWinPlugin);
+  }
+
+  // ── 移動系（優先度が低い順に use する必要はなし。priority で自動ソート）──
+  if (usePromoAnywhere) engine.use(PromoteAnywherePlugin);
+  if (useBerserker)     engine.use(BerserkerPlugin);
+
+  // ── 駒の効果 ──────────────────────────────
+  if (useDefection) engine.use(DefectionPlugin);
+  if (useExile)     engine.use(ExileOnCapturePlugin);
+  if (useKamikaze)  engine.use(KamikazePlugin);
+  if (useExplosive) engine.use(ExplosivePiecePlugin);
+
+  // ── アクション系 ──────────────────────────
+  if (useDoubleMove) engine.use(DoubleMovePlugin);
+
+  // ── 盤面効果 ──────────────────────────────
+  if (useGravity) engine.use(GravityPlugin);
+  if (useShrink)  engine.use(ShrinkBoardPlugin);
+
+  engine.init();
   buildLabels();
   renderAll();
 }

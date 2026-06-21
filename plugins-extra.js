@@ -353,9 +353,20 @@ function extraPieceActions(state, type, moveFn) {
   return extra;
 }
 
+// ── 追加駒 共通: init なし（移動のみ）と フル版 ─────────────────
+// フル版 = 持ち駒追加 + 移動生成
+// Move-only 版 = 移動生成のみ（局面編集でカスタム配置された際に自動追加）
+
 // ── 11. クイーン（女王）──────────────────────────────────────────
-// 全8方向スライダー。各プレイヤーの持ち駒として1枚追加。成れない。
 const Q_DIRS = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
+function queenGetActions(actions, state) {
+  return [...actions, ...extraPieceActions(state, 'Q',
+    (t, r, c, b) => slideMoves(t, r, c, b, Q_DIRS))];
+}
+export const QueenMovePlugin = {
+  id: 'queen_move', priority: -90,
+  hooks: { get_actions: queenGetActions },
+};
 export const QueenPlugin = {
   id: 'queen_piece', priority: -90,
   meta: { name: 'クイーン追加', description: '全方向スライダー。各プレイヤーに持ち駒1枚追加（飛車+角の合体）' },
@@ -366,16 +377,20 @@ export const QueenPlugin = {
       s.hands.white.push(makeToken('Q', 'white'));
       return s;
     },
-    get_actions(actions, state) {
-      return [...actions, ...extraPieceActions(state, 'Q',
-        (t, r, c, b) => slideMoves(t, r, c, b, Q_DIRS))];
-    },
+    get_actions: queenGetActions,
   },
 };
 
 // ── 12. 全方向桂（跳馬）─────────────────────────────────────────
-// チェスのナイトと同様に8方向に桂馬跳び。各プレイヤーに1枚追加。
 const CK_OFFSETS = [[-2,-1],[-2,1],[2,-1],[2,1],[-1,-2],[-1,2],[1,-2],[1,2]];
+function crazyKnightGetActions(actions, state) {
+  return [...actions, ...extraPieceActions(state, 'CK',
+    (t, r, c, b) => jumpMoves(t, r, c, b, CK_OFFSETS))];
+}
+export const CrazyKnightMovePlugin = {
+  id: 'crazy_knight_move', priority: -90,
+  hooks: { get_actions: crazyKnightGetActions },
+};
 export const CrazyKnightPlugin = {
   id: 'crazy_knight', priority: -90,
   meta: { name: '全方向桂追加', description: 'チェスのナイト同様、全8方向に桂馬跳び。各プレイヤーに1枚追加' },
@@ -386,19 +401,82 @@ export const CrazyKnightPlugin = {
       s.hands.white.push(makeToken('CK', 'white'));
       return s;
     },
-    get_actions(actions, state) {
-      return [...actions, ...extraPieceActions(state, 'CK',
-        (t, r, c, b) => jumpMoves(t, r, c, b, CK_OFFSETS))];
-    },
+    get_actions: crazyKnightGetActions,
   },
 };
 
 // ── 13. 忍者（瞬間移動）─────────────────────────────────────────
-// 盤上の任意の空きマスへ瞬間移動、または任意の敵駒を取る。
-// 手駒には入れず、存在するだけでプレッシャーをかける変則駒。
+// 制限:
+//   - 玉は取れない（王手放置を回避させない）
+//   - 使用後1ターン休息（連続使用不可）
+function ninjaGetActions(actions, state) {
+  const player = state.turn;
+  // 休息中は手を生成しない
+  if ((state.global.ninjaExhausted || {})[player]) return actions;
+
+  const extra = [];
+
+  // 盤上の忍者の移動（玉取り禁止）
+  for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
+    const t = state.board[r][c].token;
+    if (!t || t.owner !== player || t.type !== 'NJ') continue;
+    for (let tr = 0; tr < 9; tr++) for (let tc = 0; tc < 9; tc++) {
+      if (tr === r && tc === c) continue;
+      const target = state.board[tr][tc].token;
+      if (target && target.type === 'K') continue;       // 玉は取れない
+      if (target && target.owner === player) continue;   // 自駒には動けない
+      extra.push({ player, tag: 'move', payload: { from:{row:r,col:c}, to:{row:tr,col:tc}, promote:false }});
+    }
+  }
+
+  // 持ち駒からの打ち（空きマスのみ）
+  if (state.hands[player].some(t => t.type === 'NJ')) {
+    for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
+      if (!state.board[r][c].token)
+        extra.push({ player, tag: 'drop', payload: { type:'NJ', to:{row:r,col:c} }});
+    }
+  }
+  return [...actions, ...extra];
+}
+
+function ninjaAfterAction(action, state) {
+  // 忍者を動かした/打ったとき休息フラグを立てる
+  let acted = false;
+  if (action.tag === 'move') {
+    acted = state.board[action.payload.to.row]?.[action.payload.to.col]?.token?.type === 'NJ';
+  } else if (action.tag === 'drop') {
+    acted = action.payload.type === 'NJ';
+  }
+  if (!acted) return state;
+  return {
+    ...state,
+    global: {
+      ...state.global,
+      ninjaExhausted: { ...(state.global.ninjaExhausted || {}), [action.player]: true },
+    },
+  };
+}
+
+function ninjaTurnStart(state) {
+  // ターン開始時に自分の忍者休息を解除
+  const ex = state.global.ninjaExhausted || {};
+  if (!ex[state.turn]) return state;
+  const newEx = { ...ex };
+  delete newEx[state.turn];
+  return { ...state, global: { ...state.global, ninjaExhausted: newEx } };
+}
+
+export const NinjaMovePlugin = {
+  id: 'ninja_move', priority: -90,
+  hooks: {
+    get_actions: ninjaGetActions,
+    after_action: ninjaAfterAction,
+    on_turn_start: ninjaTurnStart,
+  },
+};
 export const NinjaPlugin = {
   id: 'ninja_piece', priority: -90,
-  meta: { name: '忍者追加', description: '任意の空きマスへ瞬間移動・任意の敵駒を取れる超機動駒。各プレイヤーに1枚追加' },
+  meta: { name: '忍者追加', description: '任意マスへ瞬間移動・玉以外の敵駒取り可。使用後1ターン休息。各プレイヤーに1枚追加' },
   hooks: {
     on_game_init(state) {
       const s = deepClone(state);
@@ -406,33 +484,9 @@ export const NinjaPlugin = {
       s.hands.white.push(makeToken('NJ', 'white'));
       return s;
     },
-    get_actions(actions, state) {
-      const player = state.turn;
-      const extra = [];
-      let ninjaPos = null;
-      for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
-        const t = state.board[r][c].token;
-        if (t && t.owner === player && t.type === 'NJ') { ninjaPos = {r, c}; break; }
-      }
-      if (ninjaPos) {
-        const {r, c} = ninjaPos;
-        for (let tr = 0; tr < 9; tr++) for (let tc = 0; tc < 9; tc++) {
-          if (tr === r && tc === c) continue;
-          const target = state.board[tr][tc].token;
-          if (!target || target.owner !== player) {
-            extra.push({ player, tag: 'move', payload: { from:{row:r,col:c}, to:{row:tr,col:tc}, promote:false }});
-          }
-        }
-      }
-      // 打ち
-      if (state.hands[player].some(t => t.type === 'NJ')) {
-        for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
-          if (!state.board[r][c].token)
-            extra.push({ player, tag: 'drop', payload: { type:'NJ', to:{row:r,col:c} }});
-        }
-      }
-      return [...actions, ...extra];
-    },
+    get_actions: ninjaGetActions,
+    after_action: ninjaAfterAction,
+    on_turn_start: ninjaTurnStart,
   },
 };
 

@@ -31,9 +31,9 @@ import {
   ShrinkBoardPlugin,
   GravityPlugin,
   CaptureWinPlugin,
-  QueenPlugin,
-  CrazyKnightPlugin,
-  NinjaPlugin,
+  QueenPlugin,      QueenMovePlugin,
+  CrazyKnightPlugin, CrazyKnightMovePlugin,
+  NinjaPlugin,      NinjaMovePlugin,
   EXTRA_KANJI,
 } from './plugins-extra.js?v=6';
 
@@ -82,12 +82,14 @@ let customLayout = null;
 
 function makeCustomInitPlugin(layout) {
   return {
-    id: 'custom_init', priority: -200,
+    // priority 50 = StandardShogiPlugin(-100)・追加駒Plugin(-90) より後に実行
+    // → 標準配置と手駒追加を上書きして盤面だけカスタムにする
+    id: 'custom_init', priority: 50,
     hooks: {
       on_game_init(state) {
         const s = deepClone(state);
+        // 盤だけクリア（手駒は他プラグインが追加したものを保持）
         for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) s.board[r][c].token = null;
-        s.hands = { black: [], white: [] };
         for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
           const item = layout[r][c];
           if (item) s.board[r][c].token = makeToken(item.type, item.owner);
@@ -302,6 +304,12 @@ function handleCellClick(row, col) {
 
   const token = state.board[row][col].token;
   if (token && token.owner === state.turn) {
+    // 既に選択中の同じ駒をクリック → 選択キャンセル
+    if (selectedCell?.type === 'board' && selectedCell.row === row && selectedCell.col === col) {
+      clearSel();
+      renderAll();
+      return;
+    }
     clearSel();
     const all = engine.getLegalActions();
     legalActions = all.filter(a => a.tag==='move' && a.payload.from.row===row && a.payload.from.col===col);
@@ -506,12 +514,8 @@ function closeEditor() {
 }
 
 function getActivePieceTypes() {
-  // 現在の設定モーダルで有効になっている追加駒のタイプを返す
-  const extra = [];
-  if (document.getElementById('opt-queen')?.checked)        extra.push('Q');
-  if (document.getElementById('opt-crazy-knight')?.checked) extra.push('CK');
-  if (document.getElementById('opt-ninja')?.checked)        extra.push('NJ');
-  return extra;
+  // パレットには常に全追加駒種を表示（プラグイン選択状態に依存しない）
+  return ['Q', 'CK', 'NJ'];
 }
 
 function buildPalette() {
@@ -667,7 +671,15 @@ function startNewGame() {
   if (useNinja)       engine.use(NinjaPlugin);
 
   // ── カスタム初期配置 ──────────────────────
-  if (customLayout) engine.use(makeCustomInitPlugin(customLayout));
+  if (customLayout) {
+    // 配置された追加駒のタイプを検出し、未登録の動作プラグインを自動追加
+    const layoutTypes = new Set();
+    for (const row of customLayout) for (const cell of row) if (cell) layoutTypes.add(cell.type);
+    if (layoutTypes.has('Q')  && !useQueen)       engine.use(QueenMovePlugin);
+    if (layoutTypes.has('CK') && !useCrazyKnight) engine.use(CrazyKnightMovePlugin);
+    if (layoutTypes.has('NJ') && !useNinja)       engine.use(NinjaMovePlugin);
+    engine.use(makeCustomInitPlugin(customLayout));
+  }
 
   engine.init();
 

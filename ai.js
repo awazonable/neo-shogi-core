@@ -1,7 +1,7 @@
 // ai.js — AI Layer (Neo将棋 v0.4)
 // RandomAI + Level1AI（王手放置なし・1手読み）
 
-import { opp, tokAt, getMoves, isKingInCheck, simulateAction, findKingPos } from './engine.js?v=8';
+import { opp, tokAt, getMoves, isKingInCheck, simulateAction, findKingPos } from './engine.js?v=9';
 
 // ── Random AI ─────────────────────────────────────────────────────
 // 合法手から取り手を60%優先してランダム選択
@@ -236,6 +236,14 @@ function minimaxRoot(engine, extraDepth) {
     if (s > best) { best = s; bestAction = action; }
   }
   return bestAction;
+}
+
+// ── 棋譜評価用: minimax で局面を評価（常に先手視点・ノイズなし）────
+// depth=2 で 2 手先まで読む。make-unmake のため ~10-30ms で完了。
+// withNoise はルート選択専用のため、この関数には一切付加されない。
+export function minimaxEval(engine, depth = 2) {
+  const st = JSON.parse(JSON.stringify(engine.state));
+  return minimaxFast(engine, st, depth, -Infinity, Infinity, 'black');
 }
 
 // ── Level2 AI（2手読み）─────────────────────────────────────────

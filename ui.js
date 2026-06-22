@@ -4,13 +4,13 @@
 import {
   NeoShogiEngine, resetUid, opp,
   KANJI, pieceKanji, promoType, makeToken, deepClone,
-} from './engine.js?v=8';
+} from './engine.js?v=9';
 
 import {
   StandardShogiPlugin,
   NoMovesWinPlugin,
   DoubleMovePlugin,
-} from './plugins.js?v=8';
+} from './plugins.js?v=9';
 
 import {
   randomAIChooseAction,
@@ -19,7 +19,8 @@ import {
   level3AIChooseAction,
   makeTimeLimitedAI,
   evalBoard,
-} from './ai.js?v=8';
+  minimaxEval,
+} from './ai.js?v=9';
 
 import {
   ReverseWinPlugin,
@@ -36,7 +37,7 @@ import {
   CrazyKnightPlugin, CrazyKnightMovePlugin,
   NinjaPlugin,      NinjaMovePlugin,
   EXTRA_KANJI,
-} from './plugins-extra.js?v=8';
+} from './plugins-extra.js?v=9';
 
 // ── UI State ─────────────────────────────────────────────────────
 let engine        = null;
@@ -349,12 +350,14 @@ function handleHandClick(player, pieceType) {
 
 // ── Action execution ─────────────────────────────────────────────
 // result: engine.step() の戻り値（'black'|'white'|null）
-// 詰み確定時は ±99999 を記録し、グラフで明確に示す
+// minimaxEval(depth=2) でその局面の minimax スコアを記録する（先手視点）。
+// 詰み確定時は minimax が自然に ±999999 を返すため特別処理は不要だが、
+// result が分かっている場合は再探索コストを省くために定数を使う。
 function pushHistory(action, result = null) {
   let evalScore;
-  if      (result === 'black') evalScore =  99999;
-  else if (result === 'white') evalScore = -99999;
-  else evalScore = evalBoard(engine.state, 'black');
+  if      (result === 'black') evalScore =  999999;
+  else if (result === 'white') evalScore = -999999;
+  else evalScore = minimaxEval(engine, 2);
   replayHistory.push({ action, state: deepClone(engine.state), evalScore });
 }
 
@@ -495,12 +498,12 @@ function drawEvalGraph() {
   ctx.scale(dpr, dpr);
 
   const scores = replayHistory.map(h => h.evalScore ?? 0);
-  // 詰み(±99999)は端に張り付かせる。通常局面は ±max(800, 実値) でスケール
-  const nonMate = scores.filter(s => Math.abs(s) < 99000);
+  // 詰み(±999999)は端に張り付かせる。通常局面は ±max(800, 実値) でスケール
+  const nonMate = scores.filter(s => Math.abs(s) < 999000);
   const maxAbs  = Math.min(3000, Math.max(800, ...nonMate.map(Math.abs)));
   const MATE_VAL = maxAbs; // 詰みを端(maxAbs)として扱う
   const toY = s => {
-    const clamped = Math.abs(s) >= 99000 ? (s > 0 ? MATE_VAL : -MATE_VAL) : Math.max(-maxAbs, Math.min(maxAbs, s));
+    const clamped = Math.abs(s) >= 999000 ? (s > 0 ? MATE_VAL : -MATE_VAL) : Math.max(-maxAbs, Math.min(maxAbs, s));
     return H / 2 - (clamped / maxAbs) * (H / 2 - 4);
   };
   const toX = i => (scores.length < 2) ? W / 2 : (i / (scores.length - 1)) * W;
@@ -560,13 +563,13 @@ function drawEvalGraph() {
     const s = Math.round(scores[ci]);
     const abs = Math.abs(s);
     let adv;
-    if      (s >=  99000) adv = '先手 詰み';
-    else if (s <= -99000) adv = '後手 詰み';
-    else if (abs < 80)    adv = `均衡 (${s > 0 ? '+' : ''}${s})`;
-    else if (s > 0)       adv = `先手有利 (+${abs})`;
-    else                  adv = `後手有利 (-${abs})`;
-    // 静的材料評価であることを明示（minimax の探索スコアとは異なる）
-    label.textContent = adv + '  ※材料バランス（静的）';
+    if      (s >=  999000) adv = '先手 詰み確定';
+    else if (s <= -999000) adv = '後手 詰み確定';
+    else if (abs < 80)     adv = `均衡 (${s > 0 ? '+' : ''}${s})`;
+    else if (s > 0)        adv = `先手有利 (+${abs})`;
+    else                   adv = `後手有利 (-${abs})`;
+    // minimax(depth=2) の探索評価値
+    label.textContent = adv + '  (minimax 2手読み)';
   }
 }
 
@@ -795,8 +798,8 @@ function startNewGame() {
 
   engine.init();
 
-  // 棋譜リセット（初期局面の評価も記録）
-  replayHistory     = [{ action: null, state: deepClone(engine.state), evalScore: evalBoard(engine.state, 'black') }];
+  // 棋譜リセット（初期局面も minimax 評価で記録）
+  replayHistory     = [{ action: null, state: deepClone(engine.state), evalScore: minimaxEval(engine, 2) }];
   replayIndex       = -1;
   replayDisplayState = null;
   document.getElementById('replay-controls').classList.remove('show');

@@ -49,6 +49,13 @@ let aiChooseFn    = level1AIChooseAction;
 let hasDoubleMove = false;
 let captureWinActive = false;
 
+// isAITurn の切り替えと同時に CSS クラスを付け、
+// CSS レベルで全ポインターイベントをブロックする
+function setAITurn(flag) {
+  isAITurn = flag;
+  document.body.classList.toggle('ai-thinking', flag);
+}
+
 // ── 2文字駒名 ────────────────────────────────────────────────────
 let useTwoCharLabels = false;
 const KANJI_2 = {
@@ -357,15 +364,18 @@ function executeAction(action) {
   renderAll();
 
   if (aiEnabled && engine.state.turn === 'white' && !gameOver) {
-    isAITurn = true;
+    setAITurn(true);
     renderStatus();
     setTimeout(doAITurn, 350 + Math.random() * 250);
   }
 }
 
 function doAITurn() {
+  // AI手番前に事前選択をクリア（先行入力防止）
+  clearSel();
+
   const action = aiChooseFn(engine);
-  isAITurn = false;
+  setAITurn(false);
 
   if (!action) {
     gameOver = 'black';
@@ -385,7 +395,7 @@ function doAITurn() {
   renderAll();
 
   if (aiEnabled && engine.state.turn === 'white' && !gameOver) {
-    isAITurn = true;
+    setAITurn(true);
     renderStatus();
     setTimeout(doAITurn, 200);
   }
@@ -621,7 +631,7 @@ function startNewGame() {
   hidePromoDialog();
   clearSel();
   gameOver         = false;
-  isAITurn         = false;
+  setAITurn(false);
   hasDoubleMove    = useDoubleMove;
   captureWinActive = winCond === 'capture';
   aiEnabled        = true;
@@ -694,9 +704,10 @@ function startNewGame() {
 }
 
 // ── Wire up DOM events ────────────────────────────────────────────
-document.getElementById('btn-new-game').addEventListener('click', showSetupModal);
-document.getElementById('btn-start-game').addEventListener('click', startNewGame);
-document.getElementById('btn-play-again').addEventListener('click', () => { hideWinner(); showSetupModal(); });
+// ゲーム関連のボタンは AI 思考中に受け付けない（CSS の pointer-events:none に加えてガード）
+document.getElementById('btn-new-game').addEventListener('click', () => { if (!isAITurn) showSetupModal(); });
+document.getElementById('btn-start-game').addEventListener('click', () => { if (!isAITurn) startNewGame(); });
+document.getElementById('btn-play-again').addEventListener('click', () => { if (!isAITurn) { hideWinner(); showSetupModal(); } });
 
 // Winner minimize / restore
 document.getElementById('btn-minimize-winner').addEventListener('click', minimizeWinner);
@@ -758,10 +769,11 @@ document.querySelectorAll('input[name="ai-level"]').forEach(r => {
 });
 
 document.getElementById('btn-toggle-ai').addEventListener('click', () => {
+  if (isAITurn) return;  // 思考中は操作不可
   aiEnabled = !aiEnabled;
   document.getElementById('ai-toggle-label').textContent = aiEnabled ? 'ON' : 'OFF';
-  if (aiEnabled && !gameOver && engine.state.turn === 'white') {
-    isAITurn = true;
+  if (aiEnabled && !gameOver && engine && engine.state.turn === 'white') {
+    setAITurn(true);
     renderStatus();
     setTimeout(doAITurn, 350);
   }

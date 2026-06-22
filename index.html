@@ -141,6 +141,13 @@ button:hover{background:#3a3a6e}
   border-radius:8px;letter-spacing:.05em;
 }
 #btn-start-game:hover{background:#b892e0}
+/* ── AI 思考中ブロック ──────────────────── */
+/* CSS レベルで先行入力を防ぐ。JS の isAITurn ガードと二重防護。 */
+body.ai-thinking .game-wrap,
+body.ai-thinking .controls,
+body.ai-thinking #replay-controls{pointer-events:none}
+body.ai-thinking{cursor:wait}
+body.ai-thinking .cell,body.ai-thinking .hp{cursor:wait}
 /* ── 2文字駒名 ──────────────────────────── */
 .piece.two-char{font-size:calc(var(--cell)*.28);letter-spacing:-1px}
 /* ── 棋譜コントロール ───────────────────── */

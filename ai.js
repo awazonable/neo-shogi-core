@@ -8,6 +8,7 @@ import { opp, tokAt, getMoves, isKingInCheck, simulateAction, findKingPos } from
 export function randomAIChooseAction(engine) {
   const actions = engine.getLegalActions();
   if (!actions.length) return null;
+  if (actions.length === 1) return actions[0];
   const captures = actions.filter(a =>
     a.tag==='move' && engine.state.board[a.payload.to.row][a.payload.to.col].token
   );
@@ -209,6 +210,7 @@ function minimaxFast(engine, state, depth, alpha, beta, rootPlayer) {
 function minimaxRoot(engine, extraDepth) {
   const rootActions = sortByCapture(engine.getLegalActions(), engine.state);
   if (!rootActions.length) return null;
+  if (rootActions.length === 1) return rootActions[0]; // 合法手が1手のみなら即返す
   const player = engine.state.turn;
 
   // 探索用に1回だけ deepClone
@@ -262,6 +264,7 @@ function minimaxTimed(engine, state, depth, alpha, beta, rootPlayer, deadline) {
 function timeLimitedAIChooseAction(engine, timeLimitMs) {
   const rootActions = sortByCapture(engine.getLegalActions(), engine.state);
   if (!rootActions.length) return null;
+  if (rootActions.length === 1) return rootActions[0]; // 合法手が1手のみなら即返す
   const player = engine.state.turn;
   const st = JSON.parse(JSON.stringify(engine.state));
   const deadline = Date.now() + timeLimitMs;
@@ -297,6 +300,7 @@ export function makeTimeLimitedAI(timeLimitMs = 10000) {
 export function level1AIChooseAction(engine) {
   const actions = engine.getLegalActions();
   if (!actions.length) return null;
+  if (actions.length === 1) return actions[0];
 
   // 宣言系アクション（declare_double）は盤面評価不要なので後回しにして最低優先
   const boardActions   = actions.filter(a => a.tag !== 'declare_double');

@@ -46,11 +46,16 @@ const EVAL_VAL = {
   Q:1200, CK:400, NJ:900,
 };
 
-// 評価ノイズ: 手の優劣が拮抗している局面で変化を生む。
-// 値はポーン(100)の約±15%。明確な最善手の選択には影響しない。
-const EVAL_NOISE = 30;
+// ルート選択ノイズ: 探索後のルート手スコア比較時にのみ付加。
+// 探索木の精度は完全に保たれ、拮抗した手の選択にだけ変化が生まれる。
+// 値は約±25 センチポーン（ポーン価値100の約1/4）。
+const ROOT_NOISE = 50;
+// ノイズを付加（詰み/即負けスコアには適用しない）
+function withNoise(score) {
+  return Math.abs(score) >= 999000 ? score : score + (Math.random() - 0.5) * ROOT_NOISE;
+}
 
-// 評価関数（ノイズなし）: 棋譜の評価値表示にも使う
+// 評価関数（純粋・ノイズなし）: 棋譜の評価値表示にも使う
 export function evalBoard(state, forPlayer) {
   let score = 0;
   for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
@@ -191,8 +196,7 @@ function kingAlive(state, player) {
 function minimaxFast(engine, state, depth, alpha, beta, rootPlayer) {
   if (!kingAlive(state, 'black')) return rootPlayer === 'white' ? 999999 : -999999;
   if (!kingAlive(state, 'white')) return rootPlayer === 'black' ? 999999 : -999999;
-  // リーフ評価にノイズを付加 → 拮抗した手でランダムな変化が生まれる
-  if (depth === 0) return evalBoard(state, rootPlayer) + (Math.random() - 0.5) * EVAL_NOISE;
+  if (depth === 0) return evalBoard(state, rootPlayer);
 
   const actions = sortByCapture(fastGetLegal(engine, state), state);
   if (!actions.length) return state.turn === rootPlayer ? -999999 : 999999;
@@ -227,7 +231,9 @@ function minimaxRoot(engine, extraDepth) {
     const undo = makeMove(action, st);
     const score = minimaxFast(engine, st, extraDepth, -Infinity, Infinity, player);
     unmakeMove(action, st, undo);
-    if (score > best) { best = score; bestAction = action; }
+    // ルートの手選択時のみノイズを付加（探索木の精度は維持）
+    const s = withNoise(score);
+    if (s > best) { best = s; bestAction = action; }
   }
   return bestAction;
 }
@@ -247,7 +253,7 @@ function minimaxTimed(engine, state, depth, alpha, beta, rootPlayer, deadline) {
 
   if (!kingAlive(state, 'black')) return rootPlayer === 'white' ? 999999 : -999999;
   if (!kingAlive(state, 'white')) return rootPlayer === 'black' ? 999999 : -999999;
-  if (depth === 0) return evalBoard(state, rootPlayer) + (Math.random() - 0.5) * EVAL_NOISE;
+  if (depth === 0) return evalBoard(state, rootPlayer);
 
   const actions = sortByCapture(fastGetLegal(engine, state), state);
   if (!actions.length) return state.turn === rootPlayer ? -999999 : 999999;
@@ -279,7 +285,7 @@ function timeLimitedAIChooseAction(engine, timeLimitMs) {
 
   for (let depth = 1; depth <= 20; depth++) {
     if (Date.now() >= deadline) break;
-    let depthBest = -Infinity, depthBestAction = null, timedOut = false;
+    let depthBest = -Infinity, depthBestAction = null, depthBestRaw = -Infinity, timedOut = false;
 
     for (const action of rootActions) {
       if (Date.now() >= deadline) { timedOut = true; break; }
@@ -287,12 +293,14 @@ function timeLimitedAIChooseAction(engine, timeLimitMs) {
       const score = minimaxTimed(engine, st, depth - 1, -Infinity, Infinity, player, deadline);
       unmakeMove(action, st, undo);
       if (score === TO) { timedOut = true; break; }
-      if (score > depthBest) { depthBest = score; depthBestAction = action; }
+      // ルートの手選択時のみノイズを付加（探索木の精度は維持）
+      const s = withNoise(score);
+      if (s > depthBest) { depthBest = s; depthBestAction = action; depthBestRaw = score; }
     }
     if (!timedOut && depthBestAction) {
       bestAction = depthBestAction;
-      // 詰み or 全滅が確定したら、これ以上深く読んでも新情報なし → 即終了
-      if (depthBest >= 999999 || depthBest <= -999999) break;
+      // 詰み確定の判定は raw スコアで行う（ノイズで誤判定しないよう）
+      if (depthBestRaw >= 999999 || depthBestRaw <= -999999) break;
     }
     if (timedOut) break;
   }

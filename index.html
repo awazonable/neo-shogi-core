@@ -319,6 +319,34 @@ body.ai-thinking .cell,body.ai-thinking .hp{cursor:wait}
   <h2>ゲーム設定</h2>
 
   <div class="setup-section">
+    <div class="setup-label">プレイヤー</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div>
+        <div style="font-size:11px;color:var(--subtext);margin-bottom:4px;letter-spacing:.05em">先手 (黒)</div>
+        <label class="setup-row" style="margin-bottom:2px">
+          <input type="radio" name="black-player" value="human" checked>
+          <div class="setup-row-text"><span class="setup-row-name">人間</span></div>
+        </label>
+        <label class="setup-row">
+          <input type="radio" name="black-player" value="ai">
+          <div class="setup-row-text"><span class="setup-row-name">AI</span></div>
+        </label>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--subtext);margin-bottom:4px;letter-spacing:.05em">後手 (白)</div>
+        <label class="setup-row" style="margin-bottom:2px">
+          <input type="radio" name="white-player" value="human">
+          <div class="setup-row-text"><span class="setup-row-name">人間</span></div>
+        </label>
+        <label class="setup-row">
+          <input type="radio" name="white-player" value="ai" checked>
+          <div class="setup-row-text"><span class="setup-row-name">AI</span></div>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <div class="setup-section">
     <div class="setup-label">勝利条件</div>
     <label class="setup-row">
       <input type="radio" name="win-condition" value="standard" checked>

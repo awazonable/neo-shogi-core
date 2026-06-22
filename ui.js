@@ -51,6 +51,17 @@ let aiChooseFn    = level1AIChooseAction;
 let hasDoubleMove = false;
 let captureWinActive = false;
 
+// プレイヤー設定（どちらの手番をAIが担当するか）
+let blackIsAI = false;
+let whiteIsAI = true;
+
+// 次の手番がAIかどうか
+function shouldAIPlay() {
+  if (!aiEnabled || gameOver || isAITurn || !engine) return false;
+  const turn = engine.state.turn;
+  return (turn === 'black' && blackIsAI) || (turn === 'white' && whiteIsAI);
+}
+
 // isAITurn の切り替えと同時に CSS クラスを付け、
 // CSS レベルで全ポインターイベントをブロックする
 function setAITurn(flag) {
@@ -253,13 +264,15 @@ function renderStatus() {
   }
   if (isAITurn) { el.textContent = 'AIが考えています…'; return; }
   const turn = engine.state.turn;
-  // 縮小将棋: 残り手数ヒント
+  const isCurrentAI = (turn === 'black' && blackIsAI) || (turn === 'white' && whiteIsAI);
+  const playerLabel = turn === 'black' ? '先手(黒)' : '後手(白)';
+  const aiTag = isCurrentAI ? ' (AI)' : '';
   const bound = engine.state.global.shrinkBound || 0;
   const nextShrink = 10 - (engine.state.moveCount % 10);
   const shrinkHint = bound > 0 || nextShrink <= 10
     ? (bound > 0 ? ` ／ 縮小Lv${bound}` : '') + ` ／ 次縮小まで${nextShrink}手`
     : '';
-  const base = turn==='black' ? '先手(黒)のターン' : '後手(白)のターン (AI)';
+  const base = `${playerLabel}のターン${aiTag}`;
   el.textContent = engine.state.global.shrinkBound !== undefined || document.getElementById('opt-shrink')?.checked
     ? base + shrinkHint : base;
 }
@@ -267,7 +280,8 @@ function renderStatus() {
 function renderDoubleBtn() {
   const btn = document.getElementById('btn-declare-double');
   if (!btn) return;
-  if (!hasDoubleMove || gameOver || isAITurn) {
+  // AI が担当している先手は宣言ボタンを使えない
+  if (!hasDoubleMove || gameOver || isAITurn || blackIsAI) {
     btn.style.display = 'none';
     return;
   }
@@ -364,7 +378,7 @@ function pushHistory(action, result = null) {
 function executeAction(action) {
   clearSel();
   const result = engine.step(action);
-  pushHistory(action, result);   // result を渡して詰み時の evalScore を正確に
+  pushHistory(action, result);
   if (result) {
     gameOver = result;
     renderAll();
@@ -373,7 +387,7 @@ function executeAction(action) {
   }
   renderAll();
 
-  if (aiEnabled && engine.state.turn === 'white' && !gameOver) {
+  if (shouldAIPlay()) {
     setAITurn(true);
     renderStatus();
     setTimeout(doAITurn, 350 + Math.random() * 250);
@@ -381,18 +395,17 @@ function executeAction(action) {
 }
 
 function doAITurn() {
-  // AI手番前に事前選択をクリア（先行入力防止）
   clearSel();
 
   const action = aiChooseFn(engine);
   setAITurn(false);
 
   if (!action) {
-    gameOver = 'black';
-    // AI に合法手なし = 先手勝ち
-    pushHistory(null, 'black');
+    const winner = opp(engine.state.turn);
+    gameOver = winner;
+    pushHistory(null, winner);
     renderAll();
-    showWinner('black');
+    showWinner(winner);
     return;
   }
 
@@ -406,10 +419,11 @@ function doAITurn() {
   }
   renderAll();
 
-  if (aiEnabled && engine.state.turn === 'white' && !gameOver) {
+  if (shouldAIPlay()) {
     setAITurn(true);
     renderStatus();
-    setTimeout(doAITurn, 200);
+    // AI vs AI は少し間を置いて観戦しやすくする
+    setTimeout(doAITurn, blackIsAI && whiteIsAI ? 600 : 200);
   }
 }
 
@@ -717,6 +731,8 @@ function hideSetupModal() {
 // ── Game initialization ───────────────────────────────────────────
 function startNewGame() {
   const winCond          = document.querySelector('input[name="win-condition"]:checked')?.value || 'standard';
+  blackIsAI              = document.querySelector('input[name="black-player"]:checked')?.value === 'ai';
+  whiteIsAI              = document.querySelector('input[name="white-player"]:checked')?.value === 'ai';
   const useDoubleMove    = document.getElementById('opt-double-move')?.checked    || false;
   const useExplosive     = document.getElementById('opt-explosive')?.checked      || false;
   const useKamikaze      = document.getElementById('opt-kamikaze')?.checked       || false;
@@ -806,6 +822,13 @@ function startNewGame() {
 
   buildLabels();
   renderAll();
+
+  // 先手が AI なら即座に思考開始（ゲーム開始後500ms待って表示を落ち着かせる）
+  if (shouldAIPlay()) {
+    setAITurn(true);
+    renderStatus();
+    setTimeout(doAITurn, 500);
+  }
 }
 
 // ── Wire up DOM events ────────────────────────────────────────────
@@ -874,10 +897,10 @@ document.querySelectorAll('input[name="ai-level"]').forEach(r => {
 });
 
 document.getElementById('btn-toggle-ai').addEventListener('click', () => {
-  if (isAITurn) return;  // 思考中は操作不可
+  if (isAITurn) return;
   aiEnabled = !aiEnabled;
   document.getElementById('ai-toggle-label').textContent = aiEnabled ? 'ON' : 'OFF';
-  if (aiEnabled && !gameOver && engine && engine.state.turn === 'white') {
+  if (shouldAIPlay()) {
     setAITurn(true);
     renderStatus();
     setTimeout(doAITurn, 350);

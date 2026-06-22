@@ -283,7 +283,11 @@ function timeLimitedAIChooseAction(engine, timeLimitMs) {
       if (score === TO) { timedOut = true; break; }
       if (score > depthBest) { depthBest = score; depthBestAction = action; }
     }
-    if (!timedOut && depthBestAction) bestAction = depthBestAction;
+    if (!timedOut && depthBestAction) {
+      bestAction = depthBestAction;
+      // 詰み or 全滅が確定したら、これ以上深く読んでも新情報なし → 即終了
+      if (depthBest >= 999999 || depthBest <= -999999) break;
+    }
     if (timedOut) break;
   }
   return bestAction;

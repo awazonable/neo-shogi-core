@@ -348,16 +348,20 @@ function handleHandClick(player, pieceType) {
 }
 
 // ── Action execution ─────────────────────────────────────────────
-function pushHistory(action) {
-  // evalBoard(state, 'black'): 正→先手有利、負→後手有利
-  const evalScore = evalBoard(engine.state, 'black');
+// result: engine.step() の戻り値（'black'|'white'|null）
+// 詰み確定時は ±99999 を記録し、グラフで明確に示す
+function pushHistory(action, result = null) {
+  let evalScore;
+  if      (result === 'black') evalScore =  99999;
+  else if (result === 'white') evalScore = -99999;
+  else evalScore = evalBoard(engine.state, 'black');
   replayHistory.push({ action, state: deepClone(engine.state), evalScore });
 }
 
 function executeAction(action) {
   clearSel();
   const result = engine.step(action);
-  pushHistory(action);
+  pushHistory(action, result);   // result を渡して詰み時の evalScore を正確に
   if (result) {
     gameOver = result;
     renderAll();
@@ -382,13 +386,15 @@ function doAITurn() {
 
   if (!action) {
     gameOver = 'black';
+    // AI に合法手なし = 先手勝ち
+    pushHistory(null, 'black');
     renderAll();
     showWinner('black');
     return;
   }
 
   const result = engine.step(action);
-  pushHistory(action);
+  pushHistory(action, result);
   if (result) {
     gameOver = result;
     renderAll();
@@ -489,9 +495,14 @@ function drawEvalGraph() {
   ctx.scale(dpr, dpr);
 
   const scores = replayHistory.map(h => h.evalScore ?? 0);
-  // グラフのスケール: ±max(1000, 実際の最大値) でクリップ
-  const maxAbs = Math.min(3000, Math.max(800, ...scores.map(Math.abs)));
-  const toY = s => H / 2 - (Math.max(-maxAbs, Math.min(maxAbs, s)) / maxAbs) * (H / 2 - 4);
+  // 詰み(±99999)は端に張り付かせる。通常局面は ±max(800, 実値) でスケール
+  const nonMate = scores.filter(s => Math.abs(s) < 99000);
+  const maxAbs  = Math.min(3000, Math.max(800, ...nonMate.map(Math.abs)));
+  const MATE_VAL = maxAbs; // 詰みを端(maxAbs)として扱う
+  const toY = s => {
+    const clamped = Math.abs(s) >= 99000 ? (s > 0 ? MATE_VAL : -MATE_VAL) : Math.max(-maxAbs, Math.min(maxAbs, s));
+    return H / 2 - (clamped / maxAbs) * (H / 2 - 4);
+  };
   const toX = i => (scores.length < 2) ? W / 2 : (i / (scores.length - 1)) * W;
 
   // 背景
@@ -548,10 +559,14 @@ function drawEvalGraph() {
   if (label) {
     const s = Math.round(scores[ci]);
     const abs = Math.abs(s);
-    const adv = abs < 80  ? `均衡 (${s > 0 ? '+' : ''}${s})`
-              : s > 0     ? `先手有利 (+${abs})`
-                          : `後手有利 (-${abs})`;
-    label.textContent = adv;
+    let adv;
+    if      (s >=  99000) adv = '先手 詰み';
+    else if (s <= -99000) adv = '後手 詰み';
+    else if (abs < 80)    adv = `均衡 (${s > 0 ? '+' : ''}${s})`;
+    else if (s > 0)       adv = `先手有利 (+${abs})`;
+    else                  adv = `後手有利 (-${abs})`;
+    // 静的材料評価であることを明示（minimax の探索スコアとは異なる）
+    label.textContent = adv + '  ※材料バランス（静的）';
   }
 }
 

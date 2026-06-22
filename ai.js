@@ -1,7 +1,7 @@
 // ai.js — AI Layer (Neo将棋 v0.4)
 // RandomAI + Level1AI（王手放置なし・1手読み）
 
-import { opp, tokAt, getMoves, isKingInCheck, simulateAction, findKingPos } from './engine.js?v=7';
+import { opp, tokAt, getMoves, isKingInCheck, simulateAction, findKingPos } from './engine.js?v=8';
 
 // ── Random AI ─────────────────────────────────────────────────────
 // 合法手から取り手を60%優先してランダム選択
@@ -46,7 +46,12 @@ const EVAL_VAL = {
   Q:1200, CK:400, NJ:900,
 };
 
-function evalBoard(state, forPlayer) {
+// 評価ノイズ: 手の優劣が拮抗している局面で変化を生む。
+// 値はポーン(100)の約±15%。明確な最善手の選択には影響しない。
+const EVAL_NOISE = 30;
+
+// 評価関数（ノイズなし）: 棋譜の評価値表示にも使う
+export function evalBoard(state, forPlayer) {
   let score = 0;
   for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
     const t = state.board[r][c].token;
@@ -186,7 +191,8 @@ function kingAlive(state, player) {
 function minimaxFast(engine, state, depth, alpha, beta, rootPlayer) {
   if (!kingAlive(state, 'black')) return rootPlayer === 'white' ? 999999 : -999999;
   if (!kingAlive(state, 'white')) return rootPlayer === 'black' ? 999999 : -999999;
-  if (depth === 0) return evalBoard(state, rootPlayer);
+  // リーフ評価にノイズを付加 → 拮抗した手でランダムな変化が生まれる
+  if (depth === 0) return evalBoard(state, rootPlayer) + (Math.random() - 0.5) * EVAL_NOISE;
 
   const actions = sortByCapture(fastGetLegal(engine, state), state);
   if (!actions.length) return state.turn === rootPlayer ? -999999 : 999999;
@@ -241,7 +247,7 @@ function minimaxTimed(engine, state, depth, alpha, beta, rootPlayer, deadline) {
 
   if (!kingAlive(state, 'black')) return rootPlayer === 'white' ? 999999 : -999999;
   if (!kingAlive(state, 'white')) return rootPlayer === 'black' ? 999999 : -999999;
-  if (depth === 0) return evalBoard(state, rootPlayer);
+  if (depth === 0) return evalBoard(state, rootPlayer) + (Math.random() - 0.5) * EVAL_NOISE;
 
   const actions = sortByCapture(fastGetLegal(engine, state), state);
   if (!actions.length) return state.turn === rootPlayer ? -999999 : 999999;

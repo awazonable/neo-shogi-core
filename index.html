@@ -158,6 +158,11 @@ body.ai-thinking .cell,body.ai-thinking .hp{cursor:wait}
 }
 #replay-controls.show{display:flex}
 #replay-info{font-size:13px;color:var(--subtext);min-width:80px;text-align:center}
+/* ── 評価グラフ ──────────────────────────── */
+#eval-display{display:none;flex-direction:column;align-items:center;gap:4px;width:min(calc(100vw - 32px),500px)}
+#eval-display.show{display:flex}
+#eval-label{font-size:12px;color:var(--subtext);letter-spacing:.04em}
+#eval-graph{width:100%;height:80px;border-radius:8px;border:1px solid #ffffff18;display:block}
 /* ── SHRINK / SCORE ─────────────────────── */
 .cell.shrunk{background:rgba(0,0,0,.55)!important;cursor:not-allowed;opacity:.45}
 .cell.exploded{background:rgba(255,100,0,.5)!important}
@@ -286,6 +291,10 @@ body.ai-thinking .cell,body.ai-thinking .hp{cursor:wait}
   <button id="btn-replay-end">▶|</button>
   <button id="btn-replay-export">⬇ 棋譜保存</button>
   <button id="btn-replay-exit">✕</button>
+</div>
+<div id="eval-display">
+  <div id="eval-label"></div>
+  <canvas id="eval-graph"></canvas>
 </div>
 
 <!-- Shared modal overlay -->
@@ -522,6 +531,6 @@ body.ai-thinking .cell,body.ai-thinking .hp{cursor:wait}
   </div>
 </div>
 
-<script type="module" src="ui.js?v=7"></script>
+<script type="module" src="ui.js?v=8"></script>
 </body>
 </html>

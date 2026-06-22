@@ -4,13 +4,13 @@
 import {
   NeoShogiEngine, resetUid, opp,
   KANJI, pieceKanji, promoType, makeToken, deepClone,
-} from './engine.js?v=7';
+} from './engine.js?v=8';
 
 import {
   StandardShogiPlugin,
   NoMovesWinPlugin,
   DoubleMovePlugin,
-} from './plugins.js?v=7';
+} from './plugins.js?v=8';
 
 import {
   randomAIChooseAction,
@@ -18,7 +18,8 @@ import {
   level2AIChooseAction,
   level3AIChooseAction,
   makeTimeLimitedAI,
-} from './ai.js?v=7';
+  evalBoard,
+} from './ai.js?v=8';
 
 import {
   ReverseWinPlugin,
@@ -35,7 +36,7 @@ import {
   CrazyKnightPlugin, CrazyKnightMovePlugin,
   NinjaPlugin,      NinjaMovePlugin,
   EXTRA_KANJI,
-} from './plugins-extra.js?v=7';
+} from './plugins-extra.js?v=8';
 
 // ── UI State ─────────────────────────────────────────────────────
 let engine        = null;
@@ -348,7 +349,9 @@ function handleHandClick(player, pieceType) {
 
 // ── Action execution ─────────────────────────────────────────────
 function pushHistory(action) {
-  replayHistory.push({ action, state: deepClone(engine.state) });
+  // evalBoard(state, 'black'): 正→先手有利、負→後手有利
+  const evalScore = evalBoard(engine.state, 'black');
+  replayHistory.push({ action, state: deepClone(engine.state), evalScore });
 }
 
 function executeAction(action) {
@@ -433,28 +436,32 @@ function showWinner(winner) {
 // ── 棋譜再生 ─────────────────────────────────────────────────────
 function enterReplay() {
   if (!replayHistory.length) return;
-  replayIndex = replayHistory.length - 1;       // 最終局面から
+  replayIndex = replayHistory.length - 1;
   replayDisplayState = replayHistory[replayIndex].state;
   hideWinner();
   document.getElementById('replay-controls').classList.add('show');
+  document.getElementById('eval-display').classList.add('show');
   renderAll();
   updateReplayInfo();
+  drawEvalGraph();
 }
 
 function exitReplay() {
-  replayIndex       = -1;
+  replayIndex        = -1;
   replayDisplayState = null;
   document.getElementById('replay-controls').classList.remove('show');
+  document.getElementById('eval-display').classList.remove('show');
   renderAll();
   if (gameOver) showWinner(gameOver);
 }
 
 function stepReplay(delta) {
   const next = Math.max(0, Math.min(replayHistory.length - 1, replayIndex + delta));
-  replayIndex       = next;
+  replayIndex        = next;
   replayDisplayState = replayHistory[next].state;
   renderAll();
   updateReplayInfo();
+  drawEvalGraph();
 }
 
 function updateReplayInfo() {
@@ -462,10 +469,90 @@ function updateReplayInfo() {
   const cur   = replayIndex;
   const h     = replayHistory[cur];
   let label = `${cur}/${total} 手`;
-  if (h.action && h.action.player) {
-    label += ` (${h.action.player === 'black' ? '先手' : '後手'})`;
-  }
+  if (h.action?.player) label += ` (${h.action.player === 'black' ? '先手' : '後手'})`;
   document.getElementById('replay-info').textContent = label;
+}
+
+// ── 評価グラフ ────────────────────────────────────────────────────
+function drawEvalGraph() {
+  const canvas = document.getElementById('eval-graph');
+  const label  = document.getElementById('eval-label');
+  if (!canvas || replayHistory.length < 2) return;
+
+  // Canvas サイズを CSS サイズに合わせる（DPR 対応）
+  const dpr  = Math.min(window.devicePixelRatio || 1, 2);
+  const rect = canvas.getBoundingClientRect();
+  const W    = rect.width, H = rect.height;
+  canvas.width  = W * dpr;
+  canvas.height = H * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const scores = replayHistory.map(h => h.evalScore ?? 0);
+  // グラフのスケール: ±max(1000, 実際の最大値) でクリップ
+  const maxAbs = Math.min(3000, Math.max(800, ...scores.map(Math.abs)));
+  const toY = s => H / 2 - (Math.max(-maxAbs, Math.min(maxAbs, s)) / maxAbs) * (H / 2 - 4);
+  const toX = i => (scores.length < 2) ? W / 2 : (i / (scores.length - 1)) * W;
+
+  // 背景
+  ctx.fillStyle = '#12122a';
+  ctx.fillRect(0, 0, W, H);
+
+  // 先手有利エリア（上半分：青み）/ 後手有利エリア（下半分：赤み）
+  ctx.fillStyle = 'rgba(100,180,255,0.10)';
+  ctx.fillRect(0, 0, W, H / 2);
+  ctx.fillStyle = 'rgba(255,100,100,0.10)';
+  ctx.fillRect(0, H / 2, W, H / 2);
+
+  // 塗り面（曲線下面）
+  ctx.beginPath();
+  ctx.moveTo(toX(0), H / 2);
+  scores.forEach((s, i) => ctx.lineTo(toX(i), toY(s)));
+  ctx.lineTo(toX(scores.length - 1), H / 2);
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0,   'rgba(100,180,255,0.35)');
+  grad.addColorStop(0.5, 'rgba(100,180,255,0.05)');
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // ゼロライン
+  ctx.strokeStyle = '#ffffff30';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(0, H / 2); ctx.lineTo(W, H / 2); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // 評価曲線
+  ctx.strokeStyle = '#cba6f7';
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  scores.forEach((s, i) => (i === 0 ? ctx.moveTo : ctx.lineTo).call(ctx, toX(i), toY(s)));
+  ctx.stroke();
+
+  // 現在位置の縦線
+  const ci = Math.max(0, replayIndex);
+  const cx = toX(ci);
+  ctx.strokeStyle = '#ffffff50';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, H); ctx.stroke();
+
+  // 現在位置のドット
+  ctx.fillStyle = '#cba6f7';
+  ctx.beginPath();
+  ctx.arc(cx, toY(scores[ci]), 5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // ラベル更新
+  if (label) {
+    const s = Math.round(scores[ci]);
+    const abs = Math.abs(s);
+    const adv = abs < 80  ? `均衡 (${s > 0 ? '+' : ''}${s})`
+              : s > 0     ? `先手有利 (+${abs})`
+                          : `後手有利 (-${abs})`;
+    label.textContent = adv;
+  }
 }
 
 function exportGame() {
@@ -693,8 +780,8 @@ function startNewGame() {
 
   engine.init();
 
-  // 棋譜リセット
-  replayHistory     = [{ action: null, state: deepClone(engine.state) }];
+  // 棋譜リセット（初期局面の評価も記録）
+  replayHistory     = [{ action: null, state: deepClone(engine.state), evalScore: evalBoard(engine.state, 'black') }];
   replayIndex       = -1;
   replayDisplayState = null;
   document.getElementById('replay-controls').classList.remove('show');
